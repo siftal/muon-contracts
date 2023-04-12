@@ -88,7 +88,7 @@ contract SchnorrSECP256K1Verifier {
     uint8 pubKeyYParity,
     uint256 signature,
     uint256 msgHash,
-    address nonceTimesGeneratorAddress) internal pure returns (bool) {
+    address nonceTimesGeneratorAddress) public pure returns (bool) {
     require(signingPubKeyX < HALF_Q, "Public-key x >= HALF_Q");
     // Avoid signature malleability from multiple representations for ℤ/Qℤ elts
     require(signature < Q, "signature must be reduced modulo Q");
@@ -123,7 +123,7 @@ contract SchnorrSECP256K1Verifier {
     return nonceTimesGeneratorAddress == recoveredAddress;
   }
 
-  function validatePubKey (uint256 signingPubKeyX) internal pure {
+  function validatePubKey (uint256 signingPubKeyX) public pure {
     require(signingPubKeyX < HALF_Q, "Public-key x >= HALF_Q");
   }
 }

@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0
 
-pragma solidity >=0.7.0 <0.9.0;
+pragma solidity >=0.8.0 <0.9.0;
 
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./IMuonNodeManager.sol";
-
-// TODOs:
-// 1- auto compunding
-// 2- add events
-// 3- allow the DAO to edit the configs
+import "./utils/SchnorrSECP256K1Verifier.sol";
 
 /**
  * @dev Staking contracts for the Muon Nodes
@@ -31,9 +27,15 @@ import "./IMuonNodeManager.sol";
  * kept in the contract for a period and then they can withdraw
  *
  * - withdraw
- * Lets the users withdraw their staked amount + total rewards
+ * Lets the users withdraw their staked amount
+ *
+ * - getReward
+ * Lets the users withdraw their rewards
  */
-contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable {
+contract MuonNodeStakingUpgradeableV2 is
+    Initializable,
+    AccessControlUpgradeable
+{
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant DAO_ROLE = keccak256("DAO_ROLE");
     bytes32 public constant REWARD_ROLE = keccak256("REWARD_ROLE");
@@ -56,9 +58,8 @@ contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable
 
     // ===== configs ======
 
-    // Nodes should deactive their nodes on
-    // NodeManager first and wait for some time
-    // to be able to unstake
+    // Nodes should deactive their nodes first
+    // and wait for some time to be able to unstake
     uint256 public exitPendingPeriod;
 
     uint256 public minStakeAmountPerNode;
@@ -70,6 +71,42 @@ contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable
     uint256 public rewardRate;
     uint256 public lastUpdateTime;
     uint256 public rewardPerTokenStored;
+
+    // new state variables
+    struct SchnorrSign {
+        uint256 signature;
+        address owner;
+        address nonce;
+    }
+    struct PublicKey {
+        uint256 x;
+        uint8 parity;
+    }
+    uint256 public muonAppId;
+    PublicKey public muonPublicKey;
+    SchnorrSECP256K1Verifier public verifier;
+    mapping(bytes => bool) public withdrawRequests;
+
+    event Staked(address indexed staker, uint256 amount);
+    event Withdrawn(address indexed staker, uint256 amount);
+    event RewardGot(bytes reqId, address indexed staker, uint256 amount);
+    event ExitRequested(address indexed staker);
+    event MuonNodeAdded(
+        address indexed nodeAddress,
+        address indexed stakerAddress,
+        string peerId,
+        uint256 stakeAmount
+    );
+    event RewardsDistributed(
+        uint256 reward,
+        uint256 periodStart,
+        uint256 rewardPeriod
+    );
+    event ExitPendingPeriodUpdated(uint256 exitPendingPeriod);
+    event MinStakeAmountPerNodeUpdated(uint256 minStakeAmountPerNode);
+    event MaxStakeAmountPerNodeUpdated(uint256 maxStakeAmountPerNode);
+    event MuonAppIdUpdated(uint256 muonAppId);
+    event MuonPublicKeyUpdated(PublicKey muonPublicKey);
 
     /**
      * @dev Modifier that updates the reward parameters
@@ -87,25 +124,12 @@ contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable
         _;
     }
 
-    /**
-     * @dev Sets the muonToken and nodeManager
-     */
-
-    // constructor(
-    //     address muonTokenAddress,
-    //     address nodeManagerAddress
-    // ){
-    //     _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-    //     _setupRole(ADMIN_ROLE, msg.sender);
-    //     _setupRole(DAO_ROLE, msg.sender);
-
-    //     muonToken = IERC20(muonTokenAddress);
-    //     nodeManager = IMuonNodeManager(nodeManagerAddress);
-    // }
-
     function __MuonNodeStakingUpgradeable_init(
         address muonTokenAddress,
-        address nodeManagerAddress
+        address nodeManagerAddress,
+        address verifierAddress,
+        uint256 _muonAppId,
+        PublicKey memory _muonPublicKey
     ) internal initializer {
         __AccessControl_init();
 
@@ -120,13 +144,27 @@ contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable
         minStakeAmountPerNode = 1000 ether;
         maxStakeAmountPerNode = 10000 ether;
         REWARD_PERIOD = 30 days;
+
+        verifier = SchnorrSECP256K1Verifier(verifierAddress);
+        verifier.validatePubKey(_muonPublicKey.x);
+        muonPublicKey = _muonPublicKey;
+        muonAppId = _muonAppId;
     }
 
-    function initialize(address muonTokenAddress, address nodeManagerAddress)
-        external
-        initializer
-    {
-        __MuonNodeStakingUpgradeable_init(muonTokenAddress, nodeManagerAddress);
+    function initialize(
+        address muonTokenAddress,
+        address nodeManagerAddress,
+        address verifierAddress,
+        uint256 _muonAppId,
+        PublicKey memory _muonPublicKey
+    ) external initializer {
+        __MuonNodeStakingUpgradeable_init(
+            muonTokenAddress,
+            nodeManagerAddress,
+            verifierAddress,
+            _muonAppId,
+            _muonPublicKey
+        );
     }
 
     function __MuonNodeStakingUpgradeable_init_unchained()
@@ -155,29 +193,98 @@ contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable
         muonToken.transferFrom(msg.sender, address(this), amount);
         users[msg.sender].balance += amount;
         totalStaked += amount;
+        emit Staked(msg.sender, amount);
     }
 
     /**
-     * @dev Allows the users to withdraw
-     *
-     * Users should {requestExit} first. Their nodes will
-     * be deatived and after `exitPendingPeriod` secs, they can
-     * withdraw
+     * @dev Allows the users to withdraw the staked amount after exiting.
      */
     function withdraw() public {
         IMuonNodeManager.Node memory node = nodeManager.stakerAddressInfo(
             msg.sender
         );
+        require(node.id != 0, "node not found");
+
         require(
             !node.active &&
                 (node.endTime + exitPendingPeriod) < block.timestamp,
-            "Exit time not reached yet"
+            "exit time not reached yet"
         );
-        uint256 amount = users[msg.sender].withdrawable;
-        require(amount > 0, "withdrawable=0");
-        muonToken.transfer(msg.sender, amount);
 
-        users[msg.sender].withdrawable = 0;
+        uint256 amount = users[msg.sender].balance;
+        require(amount > 0, "balance=0");
+        muonToken.transfer(msg.sender, amount);
+        users[msg.sender].balance = 0;
+        emit Withdrawn(msg.sender, amount);
+    }
+
+    /**
+     * @dev Allows the users to withdraw their rewards.
+     * @param amount The amount of tokens to withdraw.
+     * @param reqId A unique identifier for this withdrawal request.
+     * @param signature A tss signature that proves the authenticity of the withdrawal request.
+     */
+    function getReward(
+        uint256 amount,
+        uint256 paidRewardPerToken,
+        bytes calldata reqId,
+        SchnorrSign calldata signature
+    ) public {
+        // Check if the withdrawal request with the given reqId has already been submitted.
+        require(!withdrawRequests[reqId], "this request already submitted");
+
+        // Check if the amount parameter is greater than 0.
+        require(amount > 0, "invalid amount");
+
+        IMuonNodeManager.Node memory node = nodeManager.stakerAddressInfo(
+            msg.sender
+        );
+        require(node.id != 0, "node not found");
+
+        require(
+            paidRewardPerToken <= rewardPerToken(),
+            "invalid paidRewardPerToken 111"
+        );
+        require(
+            users[msg.sender].paidRewardPerToken <= paidRewardPerToken,
+            "invalid paidRewardPerToken 222"
+        );
+
+        // Verify the authenticity of the withdrawal request.
+        bytes32 hash = keccak256(
+            abi.encodePacked(
+                muonAppId,
+                reqId,
+                msg.sender,
+                users[msg.sender].paidReward,
+                paidRewardPerToken,
+                amount
+            )
+        );
+        bool verified = verifier.verifySignature(
+            muonPublicKey.x,
+            muonPublicKey.parity,
+            signature.signature,
+            uint256(hash),
+            signature.nonce
+        );
+        require(verified, "invalid signature");
+
+        if (node.active) {
+            require(amount <= earned(msg.sender), "invalid amount");
+        } else {
+            require(
+                amount <= users[msg.sender].pendingRewards,
+                "invalid amount"
+            );
+            users[msg.sender].pendingRewards = 0;
+        }
+
+        users[msg.sender].paidReward += amount;
+        users[msg.sender].paidRewardPerToken = paidRewardPerToken;
+        withdrawRequests[reqId] = true;
+        muonToken.transfer(msg.sender, amount);
+        emit RewardGot(reqId, msg.sender, amount);
     }
 
     /**
@@ -188,21 +295,14 @@ contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable
         IMuonNodeManager.Node memory node = nodeManager.stakerAddressInfo(
             msg.sender
         );
-        require(node.id != 0, "Node not found");
-        // TODO: force nodes to be in the network for a minimum time
+        require(node.id != 0, "node not found");
 
-        uint256 amount = earned(msg.sender) + users[msg.sender].balance;
-        require(amount > 0, "amount=0");
+        require(node.active, "already deactivated");
 
-        totalStaked -= users[msg.sender].balance;
-
-        users[msg.sender].balance = 0;
-        users[msg.sender].pendingRewards = 0;
-        users[msg.sender].paidReward = 0;
-
-        users[msg.sender].withdrawable = amount;
+        require(users[msg.sender].balance > 0, "balance=0");
 
         nodeManager.deactiveNode(node.id);
+        emit ExitRequested(msg.sender);
     }
 
     /**
@@ -213,23 +313,24 @@ contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable
     function addMuonNode(
         address nodeAddress,
         string calldata peerId,
-        uint256 intialStakeAmount
+        uint256 initialStakeAmount
     ) public {
         require(
-            intialStakeAmount >= minStakeAmountPerNode,
-            "intialStakeAmount is not enough for running a node"
+            initialStakeAmount >= minStakeAmountPerNode,
+            "initialStakeAmount is not enough for running a node"
         );
         require(
-            intialStakeAmount <= maxStakeAmountPerNode,
+            initialStakeAmount <= maxStakeAmountPerNode,
             ">maxStakeAmountPerNode"
         );
-        _stake(intialStakeAmount);
+        _stake(initialStakeAmount);
         nodeManager.addNode(
             nodeAddress,
             msg.sender, // stakerAddress,
             peerId,
             true // active
         );
+        emit MuonNodeAdded(nodeAddress, msg.sender, peerId, initialStakeAmount);
     }
 
     /**
@@ -253,6 +354,7 @@ contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable
         }
         lastUpdateTime = block.timestamp;
         periodFinish = block.timestamp + REWARD_PERIOD;
+        emit RewardsDistributed(reward, block.timestamp, REWARD_PERIOD);
     }
 
     /**
@@ -272,11 +374,19 @@ contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable
      * @dev Total rewards for an `account`
      */
     function earned(address account) public view returns (uint256) {
-        return
-            (users[account].balance *
-                (rewardPerToken() - users[account].paidRewardPerToken)) /
-            1e18 +
-            users[account].pendingRewards;
+        IMuonNodeManager.Node memory node = nodeManager.stakerAddressInfo(
+            account
+        );
+
+        if (!node.active) {
+            return 0;
+        } else {
+            return
+                (users[account].balance *
+                    (rewardPerToken() - users[account].paidRewardPerToken)) /
+                1e18 +
+                users[account].pendingRewards;
+        }
     }
 
     /**
@@ -290,13 +400,31 @@ contract MuonNodeStakingUpgradeableV2 is Initializable, AccessControlUpgradeable
 
     function setExitPendingPeriod(uint256 val) public onlyRole(DAO_ROLE) {
         exitPendingPeriod = val;
+        emit ExitPendingPeriodUpdated(val);
     }
 
     function setMinStakeAmountPerNode(uint256 val) public onlyRole(DAO_ROLE) {
         minStakeAmountPerNode = val;
+        emit MinStakeAmountPerNodeUpdated(val);
     }
 
     function setMaxStakeAmountPerNode(uint256 val) public onlyRole(DAO_ROLE) {
         maxStakeAmountPerNode = val;
+        emit MaxStakeAmountPerNodeUpdated(val);
+    }
+
+    function setMuonAppId(uint256 _muonAppId) public onlyRole(DAO_ROLE) {
+        muonAppId = _muonAppId;
+        emit MuonAppIdUpdated(_muonAppId);
+    }
+
+    function setMuonPublicKey(PublicKey memory _muonPublicKey)
+        public
+        onlyRole(DAO_ROLE)
+    {
+        verifier.validatePubKey(_muonPublicKey.x);
+
+        muonPublicKey = _muonPublicKey;
+        emit MuonPublicKeyUpdated(_muonPublicKey);
     }
 }
