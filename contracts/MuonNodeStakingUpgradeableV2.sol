@@ -213,8 +213,8 @@ contract MuonNodeStakingUpgradeableV2 is
 
         uint256 amount = users[msg.sender].balance;
         require(amount > 0, "balance=0");
-        muonToken.transfer(msg.sender, amount);
         users[msg.sender].balance = 0;
+        muonToken.transfer(msg.sender, amount);
         emit Withdrawn(msg.sender, amount);
     }
 
@@ -301,6 +301,7 @@ contract MuonNodeStakingUpgradeableV2 is
 
         require(users[msg.sender].balance > 0, "balance=0");
 
+        totalStaked -= users[msg.sender].balance;
         nodeManager.deactiveNode(node.id);
         emit ExitRequested(msg.sender);
     }
