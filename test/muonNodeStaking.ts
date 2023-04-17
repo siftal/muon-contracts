@@ -675,7 +675,7 @@ describe("MuonNodeStakingUpgradeable", function () {
         rewardPerToken2,
         earned3
       );
-      // withdraw 100% of reward
+      // withdraw 80% of reward
       await getReward(staker1, withdrawSig2);
 
       const balance2 = await muonToken.balanceOf(staker1.address);
@@ -700,6 +700,82 @@ describe("MuonNodeStakingUpgradeable", function () {
       const balance3 = await muonToken.balanceOf(staker1.address);
       expect(balance3).to.equal(balance2.add(u2.balance));
     });
+
+    it("should not allow stakers to withdraw their stake if it's locked", async function () {
+      // Distribute rewards
+      const initialReward = thirtyDays * 3000;
+      await distributeRewards(initialReward);
+
+      // Increase time by 10 days
+      await evmIncreaseTime(60 * 60 * 24 * 10);
+
+      // try to lock non exist staker
+      await expect(nodeStaking.connect(rewardRole).lockStake(user1.address)).to.be.revertedWith(
+        "node not found"
+      );
+
+      // try to unlock not locked staker
+      await expect(nodeStaking.connect(rewardRole).unlockStake(staker1.address)).to.be.revertedWith(
+        "is not locked"
+      );
+
+      const earned1 = await nodeStaking.earned(staker1.address);
+
+      // requestExit
+      await nodeStaking.connect(staker1).requestExit();
+
+      // lock the stake
+      await nodeStaking.connect(rewardRole).lockStake(staker1.address);
+
+      // Increase time by 7 days
+      await evmIncreaseTime(60 * 60 * 24 * 7);
+
+      const u1 = await nodeStaking.users(staker1.address);
+      expect(u1.balance).to.equal(ONE.mul(1000));
+      expect(u1.pendingRewards).to.closeTo(earned1, 2000);
+      expect(u1.paidReward).to.equal(0);
+
+      // try to withdraw the stake
+      await expect(nodeStaking.connect(staker1).withdraw()).to.be.revertedWith(
+        "stake is locked"
+      );
+
+      // unlock the stake
+      await nodeStaking.connect(rewardRole).unlockStake(staker1.address);
+
+      // withdraw
+      await nodeStaking.connect(staker1).withdraw();
+
+      const u2 = await nodeStaking.users(staker1.address);
+      expect(u2.balance).to.equal(0);
+      expect(u2.pendingRewards).to.equal(u1.pendingRewards);
+      expect(u2.paidReward).to.equal(0);
+
+      const balance1 = await muonToken.balanceOf(staker1.address);
+      expect(balance1).to.equal(ONE.mul(1000));
+
+      // exited nodes should be able to get their unclaimed reward
+      const paidReward = u2.paidReward;
+      const rewardPerToken = await nodeStaking.rewardPerToken();
+      const earned = u2.pendingRewards;
+      const withdrawSig = await getDummySig(
+        staker1.address,
+        paidReward,
+        rewardPerToken,
+        earned
+      );
+      // withdraw reward
+      await getReward(staker1, withdrawSig);
+
+      const balance2 = await muonToken.balanceOf(staker1.address);
+      expect(balance2).to.equal(balance1.add(u2.pendingRewards));
+
+      const u3 = await nodeStaking.users(staker1.address);
+      expect(u3.balance).to.equal(0);
+      expect(u3.pendingRewards).to.equal(0);
+      expect(u3.paidReward).to.equal(u2.pendingRewards);
+    });
+
   });
 
   describe("DAO functions", function () {

@@ -85,12 +85,15 @@ contract MuonNodeStakingUpgradeableV2 is
     uint256 public muonAppId;
     PublicKey public muonPublicKey;
     SchnorrSECP256K1Verifier public verifier;
+    // reqId => bool
     mapping(bytes => bool) public withdrawRequests;
+    // stakerAddress => bool
+    mapping(address => bool) public lockedStakes;
 
-    event Staked(address indexed staker, uint256 amount);
-    event Withdrawn(address indexed staker, uint256 amount);
-    event RewardGot(bytes reqId, address indexed staker, uint256 amount);
-    event ExitRequested(address indexed staker);
+    event Staked(address indexed stakerAddress, uint256 amount);
+    event Withdrawn(address indexed stakerAddress, uint256 amount);
+    event RewardGot(bytes reqId, address indexed stakerAddress, uint256 amount);
+    event ExitRequested(address indexed stakerAddress);
     event MuonNodeAdded(
         address indexed nodeAddress,
         address indexed stakerAddress,
@@ -107,6 +110,8 @@ contract MuonNodeStakingUpgradeableV2 is
     event MaxStakeAmountPerNodeUpdated(uint256 maxStakeAmountPerNode);
     event MuonAppIdUpdated(uint256 muonAppId);
     event MuonPublicKeyUpdated(PublicKey muonPublicKey);
+    event StakeLocked(address indexed stakerAddress);
+    event StakeUnlocked(address indexed stakerAddress);
 
     /**
      * @dev Modifier that updates the reward parameters
@@ -211,6 +216,8 @@ contract MuonNodeStakingUpgradeableV2 is
             "exit time not reached yet"
         );
 
+        require(!lockedStakes[msg.sender], "stake is locked");
+
         uint256 amount = users[msg.sender].balance;
         require(amount > 0, "balance=0");
         users[msg.sender].balance = 0;
@@ -243,11 +250,11 @@ contract MuonNodeStakingUpgradeableV2 is
 
         require(
             paidRewardPerToken <= rewardPerToken(),
-            "invalid paidRewardPerToken 111"
+            "invalid paidRewardPerToken"
         );
         require(
             users[msg.sender].paidRewardPerToken <= paidRewardPerToken,
-            "invalid paidRewardPerToken 222"
+            "invalid paidRewardPerToken"
         );
 
         // Verify the authenticity of the withdrawal request.
@@ -395,6 +402,37 @@ contract MuonNodeStakingUpgradeableV2 is
      */
     function lastTimeRewardApplicable() public view returns (uint256) {
         return block.timestamp < periodFinish ? block.timestamp : periodFinish;
+    }
+
+    /**
+     * @dev Allows the admins to lock users' stake.
+     * @param stakerAddress The staker's address.
+     */
+    function lockStake(address stakerAddress)
+        public
+        onlyRole(REWARD_ROLE)
+    {
+        IMuonNodeManager.Node memory node = nodeManager.stakerAddressInfo(
+            stakerAddress
+        );
+        require(node.id != 0, "node not found");
+
+        lockedStakes[stakerAddress] = true;
+        emit StakeLocked(stakerAddress);
+    }
+
+    /**
+     * @dev Allows the admins to unlock users' stake.
+     * @param stakerAddress The staker's address.
+     */
+    function unlockStake(address stakerAddress)
+        public
+        onlyRole(REWARD_ROLE)
+    {
+        require(lockedStakes[stakerAddress], "is not locked");
+
+        lockedStakes[stakerAddress] = false;
+        emit StakeUnlocked(stakerAddress);
     }
 
     // ======== DAO functions ====================
