@@ -170,7 +170,7 @@ contract MuonNodeManagerUpgradeable is
         bool _active
     ) private updateState {
         require(nodeAddressIds[_nodeAddress] == 0, "Duplicate nodeAddress");
-        require(nodeAddressIds[_stakerAddress] == 0, "Duplicate stakerAddress");
+        require(stakerAddressIds[_stakerAddress] == 0, "Duplicate stakerAddress");
         lastNodeId++;
         nodes[lastNodeId] = Node({
             id: lastNodeId,
