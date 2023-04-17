@@ -2,17 +2,21 @@
 
 pragma solidity >=0.7.0 <0.9.0;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "./IMuonNodeManager.sol";
 
 // TODO: should we allow editing
 // nodeAddress, stakerAddress, peerId?
 
-contract MuonNodeManager is AccessControl, IMuonNodeManager {
+contract MuonNodeManagerUpgradeable is
+    Initializable,
+    AccessControlUpgradeable,
+    IMuonNodeManager
+{
     // ADMIN_ROLE could be granted to other smart contracts to let
     // them manage the nodes permissionlessly
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-
     bytes32 public constant DAO_ROLE = keccak256("DAO_ROLE");
 
     // nodeId => Node
@@ -24,11 +28,10 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
     // stakerAddress => nodeId
     mapping(address => uint256) public stakerAddressIds;
 
-    uint64 public lastNodeId = 0;
+    uint64 public lastNodeId;
 
-    // muon nodes check lastUpdateTime to sync their
-    // memory
-    uint256 public lastUpdateTime = block.timestamp;
+    // muon nodes check lastUpdateTime to sync their memory
+    uint256 public lastUpdateTime;
 
     // configs
     // commit_id => git commit id
@@ -43,19 +46,32 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
         address newAddr
     );
     event EditPeerId(uint64 indexed nodeId, string oldId, string newId);
-
     event Config(string indexed key, string value);
-
-    constructor() {
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(ADMIN_ROLE, msg.sender);
-        _setupRole(DAO_ROLE, msg.sender);
-    }
 
     modifier updateState() {
         lastUpdateTime = block.timestamp;
         _;
     }
+
+    function __MuonNodeManagerUpgradeable_init() internal initializer {
+        __AccessControl_init();
+
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _setupRole(ADMIN_ROLE, msg.sender);
+        _setupRole(DAO_ROLE, msg.sender);
+
+        lastNodeId = 0;
+        lastUpdateTime = block.timestamp;
+    }
+
+    function initialize() external initializer {
+        __MuonNodeManagerUpgradeable_init();
+    }
+
+    function __MuonNodeManagerUpgradeable_init_unchained()
+        internal
+        initializer
+    {}
 
     /**
      * @dev Adds a new node.
