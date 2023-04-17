@@ -5,16 +5,15 @@ pragma solidity >=0.7.0 <0.9.0;
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "./IMuonNodeManager.sol";
 
-// TODO: should we allow editing 
+// TODO: should we allow editing
 // nodeAddress, stakerAddress, peerId?
 
 contract MuonNodeManager is AccessControl, IMuonNodeManager {
     // ADMIN_ROLE could be granted to other smart contracts to let
     // them manage the nodes permissionlessly
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    
-    bytes32 public constant DAO_ROLE = keccak256("DAO_ROLE");
 
+    bytes32 public constant DAO_ROLE = keccak256("DAO_ROLE");
 
     // nodeId => Node
     mapping(uint256 => Node) public nodes;
@@ -23,7 +22,7 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
     mapping(address => uint256) public nodeAddressIds;
 
     // stakerAddress => nodeId
-    mapping(address => uint256) public stakerAddressIds;  
+    mapping(address => uint256) public stakerAddressIds;
 
     uint64 public lastNodeId = 0;
 
@@ -38,18 +37,22 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
     event AddNode(uint64 indexed nodeId, Node node);
     event RemoveNode(uint64 indexed nodeId);
     event DeactiveNode(uint64 indexed nodeId);
-    event EditNodeAddress(uint64 indexed nodeId, address oldAddr, address newAddr);
+    event EditNodeAddress(
+        uint64 indexed nodeId,
+        address oldAddr,
+        address newAddr
+    );
     event EditPeerId(uint64 indexed nodeId, string oldId, string newId);
 
     event Config(string indexed key, string value);
 
-    constructor(){
+    constructor() {
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setupRole(ADMIN_ROLE, msg.sender);
         _setupRole(DAO_ROLE, msg.sender);
     }
 
-    modifier updateState(){
+    modifier updateState() {
         lastUpdateTime = block.timestamp;
         _;
     }
@@ -67,18 +70,15 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
         string calldata _peerId,
         bool _active
     ) public override onlyRole(ADMIN_ROLE) {
-        _addNode(_nodeAddress, _stakerAddress, 
-            _peerId, _active);
+        _addNode(_nodeAddress, _stakerAddress, _peerId, _active);
     }
 
     /**
      * @dev Removes a node
      */
-    function removeNode(
-        uint64 nodeId
-    ) public onlyRole(ADMIN_ROLE) updateState{
+    function removeNode(uint64 nodeId) public onlyRole(ADMIN_ROLE) updateState {
         require(
-            nodes[nodeId].id == nodeId && nodes[nodeId].active, 
+            nodes[nodeId].id == nodeId && nodes[nodeId].active,
             "Not found"
         );
         nodes[nodeId].endTime = block.timestamp;
@@ -90,9 +90,12 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
     /**
      * @dev Allows the node's owner to deactive its node
      */
-    function deactiveNode(
-        uint64 nodeId
-    ) public override onlyRole(ADMIN_ROLE) updateState{
+    function deactiveNode(uint64 nodeId)
+        public
+        override
+        onlyRole(ADMIN_ROLE)
+        updateState
+    {
         require(nodes[nodeId].active, "Already deactived");
 
         nodes[nodeId].endTime = block.timestamp;
@@ -105,19 +108,17 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
     /**
      * @dev Edits the nodeAddress
      */
-    function editNodeAddress(
-        uint64 nodeId,
-        address nodeAddress
-    ) public onlyRole(ADMIN_ROLE) updateState{
+    function editNodeAddress(uint64 nodeId, address nodeAddress)
+        public
+        onlyRole(ADMIN_ROLE)
+        updateState
+    {
         require(
-            nodes[nodeId].id == nodeId && nodes[nodeId].active, 
+            nodes[nodeId].id == nodeId && nodes[nodeId].active,
             "Not found"
         );
-        require(
-            nodeAddressIds[nodeAddress] == 0,
-            "Duplicate nodeAddress"
-        );
-        
+        require(nodeAddressIds[nodeAddress] == 0, "Duplicate nodeAddress");
+
         nodeAddressIds[nodeAddress] = nodeId;
         nodeAddressIds[nodes[nodeId].nodeAddress] = 0;
 
@@ -131,15 +132,16 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
     /**
      * @dev Edits the nodeAddress
      */
-    function editPeerId(
-        uint64 nodeId,
-        string memory peerId
-    ) public onlyRole(ADMIN_ROLE) updateState{
+    function editPeerId(uint64 nodeId, string memory peerId)
+        public
+        onlyRole(ADMIN_ROLE)
+        updateState
+    {
         require(
-            nodes[nodeId].id == nodeId && nodes[nodeId].active, 
+            nodes[nodeId].id == nodeId && nodes[nodeId].active,
             "Not found"
         );
-        
+
         emit EditPeerId(nodeId, nodes[nodeId].peerId, peerId);
 
         nodes[nodeId].peerId = peerId;
@@ -150,16 +152,10 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
         address _stakerAddress,
         string calldata _peerId,
         bool _active
-    ) private updateState{
-        require(
-            nodeAddressIds[_nodeAddress] == 0,
-            "Duplicate nodeAddress"
-        );
-        require(
-            nodeAddressIds[_stakerAddress] == 0,
-            "Duplicate stakerAddress"
-        );
-        lastNodeId ++;
+    ) private updateState {
+        require(nodeAddressIds[_nodeAddress] == 0, "Duplicate nodeAddress");
+        require(nodeAddressIds[_stakerAddress] == 0, "Duplicate stakerAddress");
+        lastNodeId++;
         nodes[lastNodeId] = Node({
             id: lastNodeId,
             nodeAddress: _nodeAddress,
@@ -171,10 +167,10 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
             endTime: 0,
             isDeployer: false
         });
-        
+
         nodeAddressIds[_nodeAddress] = lastNodeId;
         stakerAddressIds[_stakerAddress] = lastNodeId;
-        
+
         emit AddNode(lastNodeId, nodes[lastNodeId]);
     }
 
@@ -182,46 +178,43 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
      * @dev Allows the DAO to set isDeployer
      * for the nodes
      */
-    function setIsDeployer(
-        uint64 nodeId,
-        bool _isDeployer
-    ) public onlyRole(DAO_ROLE) updateState{
-        require(
-            nodes[nodeId].isDeployer != _isDeployer,
-            "Alreay updated"
-        );
+    function setIsDeployer(uint64 nodeId, bool _isDeployer)
+        public
+        onlyRole(DAO_ROLE)
+        updateState
+    {
+        require(nodes[nodeId].isDeployer != _isDeployer, "Alreay updated");
         nodes[nodeId].isDeployer = _isDeployer;
     }
 
     /**
      * @dev Sets a config
      */
-    function setConfig(
-        string memory key,
-        string memory val
-    ) public onlyRole(DAO_ROLE){
+    function setConfig(string memory key, string memory val)
+        public
+        onlyRole(DAO_ROLE)
+    {
         configs[key] = val;
     }
 
     /**
      * @dev Returns list of all nodes.
      */
-    function getAllNodes() public view returns(
-        Node[] memory allNodes
-    ){
+    function getAllNodes() public view returns (Node[] memory allNodes) {
         allNodes = new Node[](lastNodeId);
-        for(uint256 i = 1; i <= lastNodeId; i++){
-            allNodes[i-1] = nodes[i];
+        for (uint256 i = 1; i <= lastNodeId; i++) {
+            allNodes[i - 1] = nodes[i];
         }
     }
 
     /**
      * @dev Returns all info
      */
-    function info() public view returns(
-        Node[] memory _nodes,
-        uint256 _lastUpdateTime
-    ){
+    function info()
+        public
+        view
+        returns (Node[] memory _nodes, uint256 _lastUpdateTime)
+    {
         _lastUpdateTime = lastUpdateTime;
         _nodes = getAllNodes();
     }
@@ -231,9 +224,11 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
      * nodeAddress and an empty Node(node.id==0)
      * for an invalid nodeAddress.
      */
-    function nodeAddressInfo(address _addr) public view returns(
-        Node memory node
-    ){
+    function nodeAddressInfo(address _addr)
+        public
+        view
+        returns (Node memory node)
+    {
         node = nodes[nodeAddressIds[_addr]];
     }
 
@@ -242,9 +237,12 @@ contract MuonNodeManager is AccessControl, IMuonNodeManager {
      * stakerAddress and an empty Node(node.id==0)
      * for an invalid stakerAddress.
      */
-    function stakerAddressInfo(address _addr) public override view returns(
-        Node memory node
-    ){
+    function stakerAddressInfo(address _addr)
+        public
+        view
+        override
+        returns (Node memory node)
+    {
         node = nodes[stakerAddressIds[_addr]];
     }
 }
