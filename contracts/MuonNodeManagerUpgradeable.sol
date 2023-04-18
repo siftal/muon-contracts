@@ -170,7 +170,10 @@ contract MuonNodeManagerUpgradeable is
         bool _active
     ) private updateState {
         require(nodeAddressIds[_nodeAddress] == 0, "Duplicate nodeAddress");
-        require(stakerAddressIds[_stakerAddress] == 0, "Duplicate stakerAddress");
+        require(
+            stakerAddressIds[_stakerAddress] == 0,
+            "Duplicate stakerAddress"
+        );
         lastNodeId++;
         nodes[lastNodeId] = Node({
             id: lastNodeId,
@@ -214,12 +217,19 @@ contract MuonNodeManagerUpgradeable is
     }
 
     /**
-     * @dev Returns list of all nodes.
+     * @dev Returns a list of the nodes.
+     * @param from first node id.
+     * @param to last node id.
      */
-    function getAllNodes() public view returns (Node[] memory allNodes) {
-        allNodes = new Node[](lastNodeId);
-        for (uint256 i = 1; i <= lastNodeId; i++) {
-            allNodes[i - 1] = nodes[i];
+    function getAllNodes(uint256 from, uint256 to)
+        public
+        view
+        returns (Node[] memory nodesList)
+    {
+        uint256 count = to - from;
+        nodesList = new Node[](count);
+        for (uint256 i = 0; i <= count; i++) {
+            nodesList[i] = nodes[i + from];
         }
     }
 
