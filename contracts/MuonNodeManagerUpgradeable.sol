@@ -89,7 +89,7 @@ contract MuonNodeManagerUpgradeable is
     }
 
     /**
-     * @dev Allows the node's owner to deactive its node
+     * @dev Allows the admins to deactive the nodes
      */
     function deactiveNode(uint64 nodeId)
         public
@@ -125,11 +125,10 @@ contract MuonNodeManagerUpgradeable is
         nodeAddressIds[nodeAddress] = nodeId;
         nodeAddressIds[nodes[nodeId].nodeAddress] = 0;
 
-        emit EditNodeAddress(nodeId, nodes[nodeId].nodeAddress, nodeAddress);
-
         nodes[nodeId].nodeAddress = nodeAddress;
-
         nodes[nodeId].lastEditTime = block.timestamp;
+
+        emit EditNodeAddress(nodeId, nodes[nodeId].nodeAddress, nodeAddress);
     }
 
     /**
@@ -213,9 +212,13 @@ contract MuonNodeManagerUpgradeable is
         view
         returns (Node[] memory nodesList)
     {
-        uint256 count = to - from;
+        from = from > 0 ? from : 1;
+        to = to <= lastNodeId ? to : lastNodeId;
+        require(from < to, "invalid amounts");
+        uint256 count = to - from + 1;
+
         nodesList = new Node[](count);
-        for (uint256 i = 0; i <= count; i++) {
+        for (uint256 i = 0; i < count; i++) {
             nodesList[i] = nodes[i + from];
         }
     }
