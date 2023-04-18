@@ -38,7 +38,6 @@ contract MuonNodeManagerUpgradeable is
     mapping(string => string) public configs;
 
     event AddNode(uint64 indexed nodeId, Node node);
-    event RemoveNode(uint64 indexed nodeId);
     event DeactiveNode(uint64 indexed nodeId);
     event EditNodeAddress(
         uint64 indexed nodeId,
@@ -90,20 +89,6 @@ contract MuonNodeManagerUpgradeable is
     }
 
     /**
-     * @dev Removes a node
-     */
-    function removeNode(uint64 nodeId) public onlyRole(ADMIN_ROLE) updateState {
-        require(
-            nodes[nodeId].id == nodeId && nodes[nodeId].active,
-            "Not found"
-        );
-        nodes[nodeId].endTime = block.timestamp;
-        nodes[nodeId].active = false;
-        nodes[nodeId].lastEditTime = block.timestamp;
-        emit RemoveNode(nodeId);
-    }
-
-    /**
      * @dev Allows the node's owner to deactive its node
      */
     function deactiveNode(uint64 nodeId)
@@ -112,6 +97,8 @@ contract MuonNodeManagerUpgradeable is
         onlyRole(ADMIN_ROLE)
         updateState
     {
+        require(nodes[nodeId].id == nodeId, "Not found");
+
         require(nodes[nodeId].active, "Already deactived");
 
         nodes[nodeId].endTime = block.timestamp;
