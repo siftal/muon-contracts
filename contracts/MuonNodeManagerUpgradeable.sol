@@ -234,18 +234,6 @@ contract MuonNodeManagerUpgradeable is
     }
 
     /**
-     * @dev Returns all info
-     */
-    function info()
-        public
-        view
-        returns (Node[] memory _nodes, uint256 _lastUpdateTime)
-    {
-        _lastUpdateTime = lastUpdateTime;
-        _nodes = getAllNodes();
-    }
-
-    /**
      * @dev Returns `Node` for a valid
      * nodeAddress and an empty Node(node.id==0)
      * for an invalid nodeAddress.
