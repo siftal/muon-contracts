@@ -284,9 +284,9 @@ contract MuonNodeStakingUpgradeableV2 is
                 amount <= users[msg.sender].pendingRewards,
                 "invalid amount"
             );
-            users[msg.sender].pendingRewards = 0;
         }
 
+        users[msg.sender].pendingRewards = 0;
         users[msg.sender].paidReward += amount;
         users[msg.sender].paidRewardPerToken = paidRewardPerToken;
         withdrawRequests[reqId] = true;
