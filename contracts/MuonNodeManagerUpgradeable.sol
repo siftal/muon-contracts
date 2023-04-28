@@ -170,26 +170,12 @@ contract MuonNodeManagerUpgradeable is
             startTime: block.timestamp,
             lastEditTime: block.timestamp,
             endTime: 0,
-            isDeployer: false
         });
 
         nodeAddressIds[_nodeAddress] = lastNodeId;
         stakerAddressIds[_stakerAddress] = lastNodeId;
 
         emit AddNode(lastNodeId, nodes[lastNodeId]);
-    }
-
-    /**
-     * @dev Allows the DAO to set isDeployer
-     * for the nodes
-     */
-    function setIsDeployer(uint64 nodeId, bool _isDeployer)
-        public
-        onlyRole(DAO_ROLE)
-        updateState
-    {
-        require(nodes[nodeId].isDeployer != _isDeployer, "Alreay updated");
-        nodes[nodeId].isDeployer = _isDeployer;
     }
 
     /**
