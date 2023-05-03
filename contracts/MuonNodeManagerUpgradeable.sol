@@ -4,7 +4,7 @@ pragma solidity >=0.8.0 <0.9.0;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import "./IMuonNodeManager.sol";
+import "./IMuonNodeManagerV2.sol";
 
 // TODO: should we allow editing
 // nodeAddress, stakerAddress, peerId?
@@ -149,6 +149,22 @@ contract MuonNodeManagerUpgradeable is
         nodes[nodeId].peerId = peerId;
     }
 
+    /**
+     * @dev It's a temporary function to insert old contract data
+     */
+    function addNodes(Node[] memory nodesList)
+        public
+        onlyRole(ADMIN_ROLE)
+    {
+        for (uint256 i = 0; i < nodesList.length; i++) {
+            lastNodeId++;
+            Node memory node = nodesList[i];
+            nodes[lastNodeId] = node;
+            nodeAddressIds[node.nodeAddress] = lastNodeId;
+            stakerAddressIds[node.stakerAddress] = lastNodeId;
+        }
+    }
+
     function _addNode(
         address _nodeAddress,
         address _stakerAddress,
@@ -169,7 +185,7 @@ contract MuonNodeManagerUpgradeable is
             active: _active,
             startTime: block.timestamp,
             lastEditTime: block.timestamp,
-            endTime: 0,
+            endTime: 0
         });
 
         nodeAddressIds[_nodeAddress] = lastNodeId;
