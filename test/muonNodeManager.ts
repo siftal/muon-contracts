@@ -187,40 +187,6 @@ describe("MuonNodeManagerUpgradeable", function () {
     });
   });
 
-  describe("setIsDeployer", function () {
-    it("should set isDeployer", async function () {
-      await nodeManager
-        .connect(adminRole)
-        .addNode(node1.address, staker1.address, peerId1, true);
-      await nodeManager.connect(daoRole).setIsDeployer(1, true);
-      const node = await nodeManager.nodes(1);
-      expect(node.isDeployer).to.equal(true);
-    });
-
-    it("should not update isDeployer if it is already set to the new value", async function () {
-      await nodeManager
-        .connect(adminRole)
-        .addNode(node1.address, staker1.address, peerId1, true);
-      await nodeManager.connect(daoRole).setIsDeployer(1, true);
-      await expect(nodeManager.setIsDeployer(1, true)).to.be.revertedWith(
-        "Alreay updated"
-      );
-    });
-
-    it("should set isDeployer to false", async function () {
-      await nodeManager
-        .connect(adminRole)
-        .addNode(node1.address, staker1.address, peerId1, true);
-      await nodeManager.connect(daoRole).setIsDeployer(1, true);
-      const node = await nodeManager.nodes(1);
-      expect(node.isDeployer).to.equal(true);
-
-      await nodeManager.connect(daoRole).setIsDeployer(1, false);
-      const node2 = await nodeManager.nodes(1);
-      expect(node2.isDeployer).to.equal(false);
-    });
-  });
-
   describe("getAllNodes", function () {
     beforeEach(async function () {
       await nodeManager
