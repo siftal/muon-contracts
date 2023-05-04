@@ -244,4 +244,115 @@ describe("MuonNodeManagerUpgradeable", function () {
       expect(node.id).to.equal(0);
     });
   });
+
+  describe("node roles", () => {
+    it("reverts if caller does not have DAO_ROLE", async () => {
+      await nodeManager
+        .connect(adminRole)
+        .addNode(node1.address, staker1.address, peerId1, true);
+
+      const nodeId = 1;
+      const role = ethers.utils.solidityKeccak256(["string"], ["ROLE"]);
+
+      await expect(nodeManager.connect(adminRole).setNodeRole(role, nodeId)).to
+        .be.reverted;
+
+      await expect(nodeManager.connect(adminRole).unsetNodeRole(role, nodeId))
+        .to.be.reverted;
+    });
+
+    it("adds the role to the node", async () => {
+      await nodeManager
+        .connect(adminRole)
+        .addNode(node1.address, staker1.address, peerId1, true);
+
+      const nodeId = 1;
+      const roleDeployers = ethers.utils.solidityKeccak256(
+        ["string"],
+        ["deployers"]
+      );
+      await nodeManager.connect(daoRole).setNodeRole(roleDeployers, nodeId);
+      expect(await nodeManager.nodeHasRole(roleDeployers, nodeId)).to.be.true;
+
+      const rolePoa = ethers.utils.solidityKeccak256(["string"], ["poa"]);
+      await nodeManager.connect(daoRole).setNodeRole(rolePoa, nodeId);
+      expect(await nodeManager.nodeHasRole(rolePoa, nodeId)).to.be.true;
+
+      const nodeRoleSetEvents = await nodeManager.queryFilter(
+        nodeManager.filters.NodeRoleSet(null, nodeId)
+      );
+
+      expect(nodeRoleSetEvents[0].args.role).to.equal(roleDeployers);
+      expect(nodeRoleSetEvents[0].args.nodeId).to.equal(nodeId);
+
+      expect(nodeRoleSetEvents[1].args.role).to.equal(rolePoa);
+      expect(nodeRoleSetEvents[1].args.nodeId).to.equal(nodeId);
+    });
+
+    it("removes the role from the node", async () => {
+      await nodeManager
+        .connect(adminRole)
+        .addNode(node1.address, staker1.address, peerId1, true);
+
+      const nodeId = 1;
+      const roleDeployers = ethers.utils.solidityKeccak256(
+        ["string"],
+        ["deployers"]
+      );
+      await nodeManager.connect(daoRole).setNodeRole(roleDeployers, nodeId);
+      expect(await nodeManager.nodeHasRole(roleDeployers, nodeId)).to.be.true;
+
+      const rolePoa = ethers.utils.solidityKeccak256(["string"], ["poa"]);
+      await nodeManager.connect(daoRole).setNodeRole(rolePoa, nodeId);
+      expect(await nodeManager.nodeHasRole(rolePoa, nodeId)).to.be.true;
+
+      await nodeManager.connect(daoRole).unsetNodeRole(roleDeployers, nodeId);
+      expect(await nodeManager.nodeHasRole(roleDeployers, nodeId)).to.be.false;
+      expect(await nodeManager.nodeHasRole(rolePoa, nodeId)).to.be.true;
+    });
+  });
+
+  it("getEditedNodes", async () => {
+    const startTime = (await ethers.provider.getBlock("latest")).timestamp;
+
+    for (let i = 1; i <= 10; i++) {
+      await nodeManager
+        .connect(adminRole)
+        .addNode(
+          ethers.Wallet.createRandom().address,
+          ethers.Wallet.createRandom().address,
+          `peerId${i}`,
+          true
+        );
+    }
+
+    const targetTimestamp = startTime + 2*3600;
+    await ethers.provider.send("evm_setNextBlockTimestamp", [
+      targetTimestamp,
+    ]);
+
+    for (let i = 1; i <= 5; i++) {
+      await nodeManager
+        .connect(adminRole)
+        .addNode(
+          ethers.Wallet.createRandom().address,
+          ethers.Wallet.createRandom().address,
+          `peerId${i}`,
+          true
+        );
+    }
+
+
+    // get the list of the nodes that were edited in the past hour
+    const endTime = (await ethers.provider.getBlock("latest")).timestamp;
+    const lastEditTime = endTime - 3600;
+    const editedNodesList = await nodeManager.getEditedNodes(
+      lastEditTime,
+      1,
+      1000
+    );
+
+    expect(editedNodesList).to.have.lengthOf(5);
+    expect(await nodeManager.lastNodeId()).to.be.equal(15);
+  });
 });
