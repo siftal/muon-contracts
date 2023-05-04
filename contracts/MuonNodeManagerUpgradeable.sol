@@ -37,6 +37,9 @@ contract MuonNodeManagerUpgradeable is
     // commit_id => git commit id
     mapping(string => string) public configs;
 
+    // sha256(role) => node id => bool
+    mapping(bytes32 => mapping(uint256 => bool)) public nodesRoles;
+
     event AddNode(uint64 indexed nodeId, Node node);
     event DeactiveNode(uint64 indexed nodeId);
     event EditNodeAddress(
@@ -46,6 +49,8 @@ contract MuonNodeManagerUpgradeable is
     );
     event EditPeerId(uint64 indexed nodeId, string oldId, string newId);
     event Config(string indexed key, string value);
+    event NodeRoleSet(bytes32 indexed role, uint256 indexed nodeId);
+    event NodeRoleUnset(bytes32 indexed role, uint256 indexed nodeId);
 
     modifier updateState() {
         lastUpdateTime = block.timestamp;
@@ -152,10 +157,7 @@ contract MuonNodeManagerUpgradeable is
     /**
      * @dev It's a temporary function to insert old contract data
      */
-    function addNodes(Node[] memory nodesList)
-        public
-        onlyRole(ADMIN_ROLE)
-    {
+    function addNodes(Node[] memory nodesList) public onlyRole(ADMIN_ROLE) {
         for (uint256 i = 0; i < nodesList.length; i++) {
             lastNodeId++;
             Node memory node = nodesList[i];
@@ -205,23 +207,87 @@ contract MuonNodeManagerUpgradeable is
     }
 
     /**
-     * @dev Returns a list of the nodes.
-     * @param from first node id.
-     * @param to last node id.
+     * @dev Returns whether a given node has a given role.
      */
-    function getAllNodes(uint256 from, uint256 to)
+    function nodeHasRole(bytes32 role, uint256 nodeId)
+        public
+        view
+        returns (bool)
+    {
+        return nodesRoles[role][nodeId];
+    }
+
+    /**
+     * @dev Adds a role to a given node.
+     */
+    function setNodeRole(bytes32 role, uint256 nodeId)
+        public
+        onlyRole(DAO_ROLE)
+        updateState
+    {
+        require(nodes[nodeId].active, "is not an active node");
+
+        if (!nodesRoles[role][nodeId]) {
+            nodesRoles[role][nodeId] = true;
+            emit NodeRoleSet(role, nodeId);
+        }
+    }
+
+    /**
+     * @dev Removes a role from a given node.
+     */
+    function unsetNodeRole(bytes32 role, uint256 nodeId)
+        public
+        onlyRole(DAO_ROLE)
+        updateState
+    {
+        if (nodesRoles[role][nodeId]) {
+            nodesRoles[role][nodeId] = false;
+            emit NodeRoleUnset(role, nodeId);
+        }
+    }
+
+    /**
+     * @dev Returns a list of the nodes.
+     */
+    function getAllNodes(uint256 _from, uint256 _to)
         public
         view
         returns (Node[] memory nodesList)
     {
-        from = from > 0 ? from : 1;
-        to = to <= lastNodeId ? to : lastNodeId;
-        require(from < to, "invalid amounts");
-        uint256 count = to - from + 1;
+        _from = _from > 0 ? _from : 1;
+        _to = _to <= lastNodeId ? _to : lastNodeId;
+        require(_from < _to, "invalid amounts");
+        uint256 count = _to - _from + 1;
 
         nodesList = new Node[](count);
         for (uint256 i = 0; i < count; i++) {
-            nodesList[i] = nodes[i + from];
+            nodesList[i] = nodes[i + _from];
+        }
+    }
+
+    /**
+     * @dev Returns a list of edited nodes.
+     */
+    function getEditedNodes(
+        uint64 _lastEditTime,
+        uint256 _from,
+        uint256 _to
+    ) public view returns (Node[] memory nodesList) {
+        nodesList = new Node[](100);
+        uint64 n = 0;
+        for (uint256 i = _from; i <= _to && n < 100; i++) {
+            Node memory node = nodes[i];
+
+            if (node.lastEditTime > _lastEditTime) {
+                nodesList[n] = node;
+                n++;
+            }
+        }
+
+        // Resize the array to remove any unused elements
+        assembly {
+            mstore(nodesList, n)
         }
     }
 
