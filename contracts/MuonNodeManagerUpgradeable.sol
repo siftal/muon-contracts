@@ -229,6 +229,7 @@ contract MuonNodeManagerUpgradeable is
 
         if (!nodesRoles[role][nodeId]) {
             nodesRoles[role][nodeId] = true;
+            nodes[nodeId].lastEditTime = block.timestamp;
             emit NodeRoleSet(role, nodeId);
         }
     }
@@ -243,6 +244,7 @@ contract MuonNodeManagerUpgradeable is
     {
         if (nodesRoles[role][nodeId]) {
             nodesRoles[role][nodeId] = false;
+            nodes[nodeId].lastEditTime = block.timestamp;
             emit NodeRoleUnset(role, nodeId);
         }
     }
