@@ -20,13 +20,13 @@ contract MuonNodeManagerUpgradeable is
     bytes32 public constant DAO_ROLE = keccak256("DAO_ROLE");
 
     // nodeId => Node
-    mapping(uint256 => Node) public nodes;
+    mapping(uint64 => Node) public nodes;
 
     // nodeAddress => nodeId
-    mapping(address => uint256) public nodeAddressIds;
+    mapping(address => uint64) public nodeAddressIds;
 
     // stakerAddress => nodeId
-    mapping(address => uint256) public stakerAddressIds;
+    mapping(address => uint64) public stakerAddressIds;
 
     uint64 public lastNodeId;
 
@@ -37,8 +37,11 @@ contract MuonNodeManagerUpgradeable is
     // commit_id => git commit id
     mapping(string => string) public configs;
 
-    // sha256(role) => node id => bool
-    mapping(bytes32 => mapping(uint256 => bool)) public nodesRoles;
+    uint64 public lastRoleId;
+    // hash(role) => role id
+    mapping(bytes32 => uint64) public roleIds;
+    // role id => node id => bool
+    mapping(uint64 => mapping(uint64 => bool)) public nodesRoles;
 
     event AddNode(uint64 indexed nodeId, Node node);
     event DeactiveNode(uint64 indexed nodeId);
@@ -49,8 +52,9 @@ contract MuonNodeManagerUpgradeable is
     );
     event EditPeerId(uint64 indexed nodeId, string oldId, string newId);
     event Config(string indexed key, string value);
-    event NodeRoleSet(bytes32 indexed role, uint256 indexed nodeId);
-    event NodeRoleUnset(bytes32 indexed role, uint256 indexed nodeId);
+    event NodeRoleAdded(bytes32 indexed role, uint64 roleId);
+    event NodeRoleSet(bytes32 indexed role, uint64 indexed nodeId);
+    event NodeRoleUnset(bytes32 indexed role, uint64 indexed nodeId);
 
     modifier updateState() {
         lastUpdateTime = block.timestamp;
@@ -66,6 +70,7 @@ contract MuonNodeManagerUpgradeable is
 
         lastNodeId = 0;
         lastUpdateTime = block.timestamp;
+        lastRoleId = 0;
     }
 
     function initialize() external initializer {
@@ -185,6 +190,7 @@ contract MuonNodeManagerUpgradeable is
             stakerAddress: _stakerAddress,
             peerId: _peerId,
             active: _active,
+            roles: new uint64[](0),
             startTime: block.timestamp,
             lastEditTime: block.timestamp,
             endTime: 0
@@ -209,26 +215,40 @@ contract MuonNodeManagerUpgradeable is
     /**
      * @dev Returns whether a given node has a given role.
      */
-    function nodeHasRole(bytes32 role, uint256 nodeId)
+    function nodeHasRole(bytes32 role, uint64 nodeId)
         public
         view
         returns (bool)
     {
-        return nodesRoles[role][nodeId];
+        return nodesRoles[roleIds[role]][nodeId];
+    }
+
+    /**
+     * @dev Adds a new role.
+     */
+    function addNodeRole(bytes32 role) public onlyRole(DAO_ROLE) {
+        require(roleIds[role] == 0, "this role is already added");
+
+        lastRoleId++;
+        roleIds[role] = lastRoleId;
+        emit NodeRoleAdded(role, lastRoleId);
     }
 
     /**
      * @dev Adds a role to a given node.
      */
-    function setNodeRole(bytes32 role, uint256 nodeId)
+    function setNodeRole(bytes32 role, uint64 nodeId)
         public
         onlyRole(DAO_ROLE)
         updateState
     {
         require(nodes[nodeId].active, "is not an active node");
+        require(roleIds[role] != 0, "unknown role");
 
-        if (!nodesRoles[role][nodeId]) {
-            nodesRoles[role][nodeId] = true;
+        uint64 roleId = roleIds[role];
+        if (!nodesRoles[roleId][nodeId]) {
+            nodesRoles[roleId][nodeId] = true;
+            nodes[nodeId].roles.push(roleId);
             nodes[nodeId].lastEditTime = block.timestamp;
             emit NodeRoleSet(role, nodeId);
         }
@@ -237,34 +257,63 @@ contract MuonNodeManagerUpgradeable is
     /**
      * @dev Removes a role from a given node.
      */
-    function unsetNodeRole(bytes32 role, uint256 nodeId)
+    function unsetNodeRole(bytes32 role, uint64 nodeId)
         public
         onlyRole(DAO_ROLE)
         updateState
     {
-        if (nodesRoles[role][nodeId]) {
-            nodesRoles[role][nodeId] = false;
+        require(roleIds[role] != 0, "unknown role");
+
+        uint64 roleId = roleIds[role];
+        if (nodesRoles[roleId][nodeId]) {
+            nodesRoles[roleId][nodeId] = false;
+            for (uint256 i = 0; i < nodes[nodeId].roles.length; i++) {
+                if (nodes[nodeId].roles[i] == roleId) {
+                    nodes[nodeId].roles[i] = nodes[nodeId].roles[
+                        nodes[nodeId].roles.length - 1
+                    ];
+                    nodes[nodeId].roles.pop();
+                    break;
+                }
+            }
             nodes[nodeId].lastEditTime = block.timestamp;
             emit NodeRoleUnset(role, nodeId);
         }
     }
 
     /**
+     * @dev Returns a list of the node's roles.
+     */
+    function getNodeRoles(uint64 nodeId) public view returns (uint64[] memory) {
+        return nodes[nodeId].roles;
+    }
+
+    /**
+     * @dev Returns the node.
+     */
+    function getNode(uint64 nodeId) public view returns (Node memory) {
+        Node memory node = nodes[nodeId];
+        node.roles = getNodeRoles(nodeId);
+        return node;
+    }
+
+    /**
      * @dev Returns a list of the nodes.
      */
-    function getAllNodes(uint256 _from, uint256 _to)
+    function getAllNodes(uint64 _from, uint64 _to)
         public
         view
         returns (Node[] memory nodesList)
     {
         _from = _from > 0 ? _from : 1;
         _to = _to <= lastNodeId ? _to : lastNodeId;
-        require(_from < _to, "invalid amounts");
-        uint256 count = _to - _from + 1;
+        require(_from <= _to, "invalid amounts");
+        uint64 count = _to - _from + 1;
 
         nodesList = new Node[](count);
-        for (uint256 i = 0; i < count; i++) {
+        for (uint64 i = 0; i < count; i++) {
             nodesList[i] = nodes[i + _from];
+            nodesList[i].roles = getNodeRoles(i + _from);
         }
     }
 
@@ -272,17 +321,22 @@ contract MuonNodeManagerUpgradeable is
      * @dev Returns a list of edited nodes.
      */
     function getEditedNodes(
-        uint64 _lastEditTime,
-        uint256 _from,
-        uint256 _to
+        uint256 _lastEditTime,
+        uint64 _from,
+        uint64 _to
     ) public view returns (Node[] memory nodesList) {
+        _from = _from > 0 ? _from : 1;
+        _to = _to <= lastNodeId ? _to : lastNodeId;
+        require(_from <= _to, "invalid amounts");
+
         nodesList = new Node[](100);
         uint64 n = 0;
-        for (uint256 i = _from; i <= _to && n < 100; i++) {
+        for (uint64 i = _from; i <= _to && n < 100; i++) {
             Node memory node = nodes[i];
 
             if (node.lastEditTime > _lastEditTime) {
                 nodesList[n] = node;
+                nodesList[n].roles = getNodeRoles(i);
                 n++;
             }
         }
@@ -294,9 +348,7 @@ contract MuonNodeManagerUpgradeable is
     }
 
     /**
-     * @dev Returns `Node` for a valid
-     * nodeAddress and an empty Node(node.id==0)
-     * for an invalid nodeAddress.
+     * @dev Returns the node.
      */
     function nodeAddressInfo(address _addr)
         public
@@ -307,9 +359,7 @@ contract MuonNodeManagerUpgradeable is
     }
 
     /**
-     * @dev Returns `Node` for a valid
-     * stakerAddress and an empty Node(node.id==0)
-     * for an invalid stakerAddress.
+     * @dev Returns the node.
      */
     function stakerAddressInfo(address _addr)
         public

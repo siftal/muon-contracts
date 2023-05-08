@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0
 
-pragma solidity >=0.7.0 <0.9.0;
+pragma solidity >=0.8.0 <0.9.0;
 
 interface IMuonNodeManager {
     struct Node {
@@ -9,6 +9,7 @@ interface IMuonNodeManager {
         address stakerAddress;
         string peerId; // p2p peer ID
         bool active;
+        uint64[] roles;
         uint256 startTime;
         uint256 endTime;
         uint256 lastEditTime;
