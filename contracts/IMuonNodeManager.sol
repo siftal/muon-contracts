@@ -12,6 +12,10 @@ interface IMuonNodeManager {
         uint256 startTime;
         uint256 endTime;
         uint256 lastEditTime;
+
+        // Deployer nodes on the network run
+        // the deployment app and deploy MuonApps
+        bool isDeployer;
     }
 
     function addNode(
