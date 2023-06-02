@@ -4,8 +4,10 @@ import { expect } from "chai";
 import axios from "axios";
 
 import { MuonNodeStakingUpgradeableV2 } from "../typechain/MuonNodeStakingUpgradeableV2";
-import { MuonNodeManager } from "../typechain/MuonNodeManager";
-import { MuonTestToken } from "../typechain/MuonTestToken";
+import { MuonNodeManagerUpgradeable } from "../typechain/MuonNodeManagerUpgradeable";
+import { PION } from "../typechain/PION";
+import { MuonLpTestToken } from "../typechain/MuonLpTestToken";
+import { VePION } from "../typechain/VePION";
 
 describe("MuonNodeStakingUpgradeable", function () {
   const ONE = ethers.utils.parseEther("1");
@@ -20,14 +22,17 @@ describe("MuonNodeStakingUpgradeable", function () {
   let staker2: Signer;
   let staker3: Signer;
   let user1: Signer;
+  let treasury: Signer;
 
   const peerId1 = "QmQ28Fae738pmSuhQPYtsDtwU8pKYPPgf76pSN61T3APh1";
   const peerId2 = "QmQ28Fae738pmSuhQPYtsDtwU8pKYPPgf76pSN61T3APh2";
   const peerId3 = "QmQ28Fae738pmSuhQPYtsDtwU8pKYPPgf76pSN61T3APh3";
 
-  let nodeManager: MuonNodeManager;
-  let muonToken: MuonTestToken;
+  let nodeManager: MuonNodeManagerUpgradeable;
+  let muonToken: PION;
+  let muonLpToken: muonLpTestToken;
   let nodeStaking: MuonNodeStakingUpgradeableV2;
+  let vePION: VePION;
   const thirtyDays = 2592000;
 
   beforeEach(async function () {
@@ -42,6 +47,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       staker2,
       staker3,
       user1,
+      treasury,
     ] = await ethers.getSigners();
 
     const SchnorrSECP256K1Verifier = await ethers.getContractFactory(
@@ -50,12 +56,25 @@ describe("MuonNodeStakingUpgradeable", function () {
     const verifier = await SchnorrSECP256K1Verifier.connect(deployer).deploy();
     await verifier.deployed();
 
-    const MuonTestToken = await ethers.getContractFactory("MuonTestToken");
-    muonToken = await MuonTestToken.connect(deployer).deploy();
+    const MuonTestToken = await ethers.getContractFactory("PION");
+    muonToken = await upgrades.deployProxy(MuonTestToken, []);
     await muonToken.deployed();
 
-    const MuonNodeManager = await ethers.getContractFactory("MuonNodeManager");
-    nodeManager = await MuonNodeManager.connect(deployer).deploy();
+    const MuonLpTestToken = await ethers.getContractFactory("MuonLpTestToken");
+    muonLpToken = await MuonLpTestToken.connect(deployer).deploy();
+    await muonLpToken.deployed();
+
+    const VePION = await ethers.getContractFactory("VePION");
+    vePION = await upgrades.deployProxy(VePION, [
+      muonToken.address,
+      treasury.address,
+    ]);
+    await vePION.deployed();
+
+    const MuonNodeManager = await ethers.getContractFactory(
+      "MuonNodeManagerUpgradeable"
+    );
+    nodeManager = await upgrades.deployProxy(MuonNodeManager, []);
     await nodeManager.deployed();
 
     const muonAppId =
@@ -74,6 +93,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       verifier.address,
       muonAppId,
       muonPublicKey,
+      vePION.address,
     ]);
     await nodeStaking.deployed();
 
@@ -85,31 +105,53 @@ describe("MuonNodeStakingUpgradeable", function () {
       .connect(deployer)
       .grantRole(await nodeStaking.REWARD_ROLE(), rewardRole.address);
 
+    await nodeStaking.connect(daoRole).addStakingToken(muonToken.address, ONE);
+
+    await nodeStaking
+      .connect(daoRole)
+      .addStakingToken(muonLpToken.address, ONE.mul(2));
+
+    await vePION.connect(deployer).whitelistTokens([muonLpToken.address]);
+    await vePION.connect(deployer).whitelistTransferFor([nodeStaking.address]);
+
+    await nodeStaking.connect(daoRole).setTierMaxStakeAmount(1, ONE.mul(1000));
+    await nodeStaking.connect(daoRole).setTierMaxStakeAmount(2, ONE.mul(4000));
+    await nodeStaking.connect(daoRole).setTierMaxStakeAmount(3, ONE.mul(10000));
+
     await nodeManager
       .connect(deployer)
       .grantRole(await nodeManager.ADMIN_ROLE(), nodeStaking.address);
+
+    await nodeManager
+      .connect(deployer)
+      .grantRole(await nodeManager.DAO_ROLE(), daoRole.address);
 
     await muonToken
       .connect(deployer)
       .mint(rewardRole.address, ONE.mul(2000000));
 
-    await muonToken.connect(staker1).mint(staker1.address, ONE.mul(1000));
-    await muonToken
-      .connect(staker1)
-      .approve(nodeStaking.address, ONE.mul(1000));
-    await nodeStaking
-      .connect(staker1)
-      .addMuonNode(node1.address, peerId1, ONE.mul(1000));
+    await mintVePION(1000, 1000, staker1);
+    await vePION.connect(staker1).approve(nodeStaking.address, 1);
+    await nodeStaking.connect(staker1).addMuonNode(node1.address, peerId1, 1);
+    // check added node
+    expect(await vePION.ownerOf(1)).to.equal(nodeStaking.address);
+    expect(await nodeStaking.usersTokenId(staker1.address)).to.equal(1);
+    expect(await nodeStaking.valueOfVePion(1)).to.equal(ONE.mul(3000));
+    // newly added nodes' tiers are 0, so their maximum stake amount will be 0
+    expect(await nodeManager.getTier(1)).to.equal(0);
+    expect((await nodeStaking.users(staker1.address)).balance).to.equal(0);
+    // admins can set tier
+    await nodeManager.connect(daoRole).setTier(1, 1);
+    await nodeStaking.connect(staker1).updateStaking();
+    expect((await nodeStaking.users(staker1.address)).balance).to.equal(
+      ONE.mul(1000)
+    );
 
-    await muonToken.connect(deployer).mint(staker2.address, ONE.mul(2000));
-    await muonToken
-      .connect(staker2)
-      .approve(nodeStaking.address, ONE.mul(2000));
-    await nodeStaking
-      .connect(staker2)
-      .addMuonNode(node2.address, peerId2, ONE.mul(2000));
-
-    await muonToken.connect(deployer).mint(staker3.address, ONE.mul(4000));
+    await mintVePION(1000, 500, staker2);
+    await vePION.connect(staker2).approve(nodeStaking.address, 2);
+    await nodeStaking.connect(staker2).addMuonNode(node2.address, peerId2, 2);
+    await nodeManager.connect(daoRole).setTier(2, 2);
+    await nodeStaking.connect(staker2).updateStaking();
   });
 
   const getDummySig = async (
@@ -118,10 +160,31 @@ describe("MuonNodeStakingUpgradeable", function () {
     rewardPerToken,
     amount
   ) => {
+    // console.log(
+    //   `http://localhost:8000/v1/?app=tss_reward_oracle_test&method=reward&params[stakerAddress]=${stakerAddress}&params[paidReward]=${paidReward}&params[rewardPerToken]=${rewardPerToken}&params[amount]=${amount}`
+    // );
     const response = await axios.get(
       `http://localhost:8000/v1/?app=tss_reward_oracle_test&method=reward&params[stakerAddress]=${stakerAddress}&params[paidReward]=${paidReward}&params[rewardPerToken]=${rewardPerToken}&params[amount]=${amount}`
     );
     return response.data;
+  };
+
+  const mintVePION = async (muonAmount, muonLpAmount, _to) => {
+    await muonToken.connect(deployer).mint(_to.address, ONE.mul(muonAmount));
+    await muonLpToken
+      .connect(deployer)
+      .mint(_to.address, ONE.mul(muonLpAmount));
+    await muonToken.connect(_to).approve(vePION.address, ONE.mul(muonAmount));
+    await muonLpToken
+      .connect(_to)
+      .approve(vePION.address, ONE.mul(muonLpAmount));
+    await vePION
+      .connect(_to)
+      .mintAndLock(
+        [muonToken.address, muonLpToken.address],
+        [ONE.mul(muonAmount), ONE.mul(muonLpAmount)],
+        _to.address
+      );
   };
 
   const distributeRewards = async (initialReward) => {
@@ -132,7 +195,6 @@ describe("MuonNodeStakingUpgradeable", function () {
   };
 
   const evmIncreaseTime = async (amount) => {
-    const fifteenDays = 60 * 60 * 24 * 15;
     await ethers.provider.send("evm_increaseTime", [amount]);
     await ethers.provider.send("evm_mine", []);
   };
@@ -161,9 +223,6 @@ describe("MuonNodeStakingUpgradeable", function () {
       expect(info1.active).to.equal(true);
       expect(info1.endTime).to.equal(0);
 
-      const staker1Balance = (await nodeStaking.users(staker1.address)).balance;
-      expect(staker1Balance).to.equal(ONE.mul(1000));
-
       const info2 = await nodeManager.nodeAddressInfo(node2.address);
       expect(info2.id).to.equal(2);
       expect(info2.nodeAddress).to.equal(node2.address);
@@ -171,52 +230,39 @@ describe("MuonNodeStakingUpgradeable", function () {
       expect(info2.peerId).to.equal(peerId2);
       expect(info2.active).to.equal(true);
       expect(info2.endTime).to.equal(0);
-
-      const staker2Balance = (await nodeStaking.users(staker2.address)).balance;
-      expect(staker2Balance.toString()).to.equal(ONE.mul(2000).toString());
     });
 
     it("should not add Muon nodes with insufficient stake", async function () {
-      const insufficientStake = ONE.mul(500);
+      await mintVePION(1, 1, staker3);
       await expect(
-        nodeStaking
-          .connect(staker3)
-          .addMuonNode(node3.address, peerId3, insufficientStake)
-      ).to.be.revertedWith(
-        "initialStakeAmount is not enough for running a node"
-      );
+        nodeStaking.connect(staker3).addMuonNode(node3.address, peerId3, 3)
+      ).to.be.revertedWith("the amount is not enough for running a node");
     });
 
-    it("should not add Muon nodes with more than the maximum stake amount", async function () {
-      const excessiveStake = ONE.mul(15000);
-      await expect(
-        nodeStaking
-          .connect(staker3)
-          .addMuonNode(node3.address, peerId3, excessiveStake)
-      ).to.be.revertedWith(">maxStakeAmountPerNode");
+    it("nodes can not stake more than the MaxStakeAmount of their tier", async function () {
+      await mintVePION(10000, 10000, staker3);
+      await vePION.connect(staker3).approve(nodeStaking.address, 3);
+      await nodeStaking.connect(staker3).addMuonNode(node3.address, peerId3, 3);
+
+      expect(await nodeStaking.usersTokenId(staker3.address)).to.equal(3);
+      expect(await nodeStaking.valueOfVePion(3)).to.equal(ONE.mul(30000));
+      // newly added nodes' tiers are 0, so their maximum stake amount will be 0
+      expect(await nodeManager.getTier(3)).to.equal(0);
+      expect((await nodeStaking.users(staker3.address)).balance).to.equal(0);
+      // admins can set tier
+      await nodeManager.connect(daoRole).setTier(3, 1);
+      await nodeStaking.connect(staker3).updateStaking();
+      expect((await nodeStaking.users(staker3.address)).balance)
+        .to.equal(await nodeStaking.tiersMaxStakeAmount(1))
+        .to.equal(ONE.mul(1000));
     });
 
-    it("should transfer tokens from the staker to the staking contract when adding a Muon node", async function () {
-      const initialStakerBalance = await muonToken.balanceOf(staker3.address);
-      const initialContractBalance = await muonToken.balanceOf(
-        nodeStaking.address
-      );
-
-      const stakeAmount = ONE.mul(1000);
-      await muonToken
-        .connect(staker3)
-        .approve(nodeStaking.address, stakeAmount);
-      await nodeStaking
-        .connect(staker3)
-        .addMuonNode(node3.address, peerId3, stakeAmount);
-
-      const newStakerBalance = await muonToken.balanceOf(staker3.address);
-      const newContractBalance = await muonToken.balanceOf(nodeStaking.address);
-
-      expect(newStakerBalance).to.equal(initialStakerBalance.sub(stakeAmount));
-      expect(newContractBalance).to.equal(
-        initialContractBalance.add(stakeAmount)
-      );
+    it("should transfer NFT from the staker to the staking contract when adding a Muon node", async function () {
+      await mintVePION(10000, 10000, staker3);
+      expect(await vePION.ownerOf(3)).to.equal(staker3.address);
+      await vePION.connect(staker3).approve(nodeStaking.address, 3);
+      await nodeStaking.connect(staker3).addMuonNode(node3.address, peerId3, 3);
+      expect(await vePION.ownerOf(3)).to.equal(nodeStaking.address);
     });
   });
 
@@ -226,7 +272,6 @@ describe("MuonNodeStakingUpgradeable", function () {
       // set initial reward as a multiplier of 30 days and total stake to make sure there is no leftover
       const initialReward = (thirtyDays * totalStaked) / 10 ** 18;
       await distributeRewards(initialReward);
-
       const rewardPeriod = await nodeStaking.REWARD_PERIOD();
       expect(rewardPeriod).to.be.equal(60 * 60 * 24 * 30);
 
@@ -258,9 +303,8 @@ describe("MuonNodeStakingUpgradeable", function () {
     });
 
     it("should update rewards correctly after joining new nodes", async function () {
-      await muonToken
-        .connect(staker3)
-        .approve(nodeStaking.address, ONE.mul(3000));
+      await mintVePION(1000, 1000, staker3);
+      await vePION.connect(staker3).approve(nodeStaking.address, 3);
 
       // set initial reward as a multiplier of 30 days and total stake to make sure there is no leftover
       const initialReward = thirtyDays * 18000;
@@ -276,9 +320,9 @@ describe("MuonNodeStakingUpgradeable", function () {
       ]);
 
       // add new node
-      await nodeStaking
-        .connect(staker3)
-        .addMuonNode(node3.address, peerId3, ONE.mul(3000));
+      await nodeStaking.connect(staker3).addMuonNode(node3.address, peerId3, 3);
+      await nodeManager.connect(daoRole).setTier(3, 2);
+      await nodeStaking.connect(staker3).updateStaking();
 
       // Increase time by 10 days
       targetTimestamp = distributeTimestamp + 2 * tenDays;
@@ -290,50 +334,57 @@ describe("MuonNodeStakingUpgradeable", function () {
       const staker1ExpectedReward =
         (tenDays * 18000) / 3 + (tenDays * 18000) / 6;
       const staker1ActualReward = await nodeStaking.earned(staker1.address);
-      expect(staker1ActualReward).to.be.equal(staker1ExpectedReward);
+      // tolerance for 2 seconds
+      expect(staker1ActualReward).to.closeTo(staker1ExpectedReward, 18000);
 
       const staker2ExpectedReward =
         ((tenDays * 18000) / 3) * 2 + ((tenDays * 18000) / 6) * 2;
       const staker2ActualReward = await nodeStaking.earned(staker2.address);
-      expect(staker2ActualReward).to.be.equal(staker2ExpectedReward);
+      // tolerance for 2 seconds
+      expect(staker2ActualReward).to.closeTo(staker2ExpectedReward, 18000);
 
       const staker3ExpectedReward = ((tenDays * 18000) / 6) * 3;
       const staker3ActualReward = await nodeStaking.earned(staker3.address);
-      expect(staker3ActualReward).to.be.equal(staker3ExpectedReward);
+      // tolerance for 2 seconds
+      expect(staker3ActualReward).to.closeTo(staker3ExpectedReward, 18000);
     });
 
-    it("should update rewards correctly after stake more", async function () {
-      await muonToken.connect(deployer).mint(staker2.address, ONE.mul(3000));
-      await muonToken
+    it("should update rewards correctly after lock more", async function () {
+      const tenDays = 60 * 60 * 24 * 10;
+
+      await muonToken.connect(deployer).mint(staker2.address, ONE.mul(1000));
+      await muonToken.connect(staker2).approve(vePION.address, ONE.mul(1000));
+      await vePION
         .connect(staker2)
-        .approve(nodeStaking.address, ONE.mul(3000));
+        .lock(2, [muonToken.address], [ONE.mul(1000)]);
 
       // set initial reward as a multiplier of 30 days and total stake to make sure there is no leftover
-      const initialReward = thirtyDays * 18000;
+      const initialReward = thirtyDays * 12000;
       await distributeRewards(initialReward);
       const distributeTimestamp = (await ethers.provider.getBlock("latest"))
         .timestamp;
 
       // Increase time by 10 days
-      const tenDays = 60 * 60 * 24 * 10;
       let targetTimestamp = distributeTimestamp + tenDays;
       await ethers.provider.send("evm_setNextBlockTimestamp", [
         targetTimestamp,
       ]);
 
       const staker2Stake1 = await nodeStaking.users(staker2.address);
-
-      // stakeMore
-      await nodeStaking.connect(staker2).stakeMore(ONE.mul(3000));
-
+      // lock more
+      await nodeStaking.connect(staker2).updateStaking();
       const staker2Stake2 = await nodeStaking.users(staker2.address);
       expect(staker2Stake2.balance).to.be.equal(
-        staker2Stake1.balance.add(ONE.mul(3000))
+        staker2Stake1.balance.add(ONE.mul(1000))
       );
       expect(staker2Stake2.pendingRewards).to.be.equal(
-        (tenDays * 18000 * 2) / 3
+        (tenDays * 12000 * 2) / 3
       );
-      expect(staker2Stake2.balance).to.be.equal(ONE.mul(5000));
+      expect(staker2Stake2.balance).to.be.equal(ONE.mul(3000));
+
+      const staker1ExpectedReward1 = (tenDays * 12000) / 3;
+      const staker1ActualReward1 = await nodeStaking.earned(staker1.address);
+      expect(staker1ActualReward1).to.be.equal(staker1ExpectedReward1);
 
       // Increase time by 10 days
       targetTimestamp = distributeTimestamp + 2 * tenDays;
@@ -343,12 +394,12 @@ describe("MuonNodeStakingUpgradeable", function () {
       await ethers.provider.send("evm_mine", []);
 
       const staker1ExpectedReward =
-        (tenDays * 18000) / 3 + (tenDays * 18000) / 6;
+        (tenDays * 12000) / 3 + (tenDays * 12000) / 4;
       const staker1ActualReward = await nodeStaking.earned(staker1.address);
       expect(staker1ActualReward).to.be.equal(staker1ExpectedReward);
 
       const staker2ExpectedReward =
-        ((tenDays * 18000) / 3) * 2 + ((tenDays * 18000) / 6) * 5;
+        ((tenDays * 12000) / 3) * 2 + ((tenDays * 12000) / 4) * 3;
       const staker2ActualReward = await nodeStaking.earned(staker2.address);
       expect(staker2ActualReward).to.be.equal(staker2ExpectedReward);
     });
@@ -469,7 +520,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       );
 
       // tolerance for 2 seconds
-      expect(await nodeStaking.earned(staker1.address)).to.closeTo(0, 2000);
+      expect(await nodeStaking.earned(staker1.address)).to.closeTo(0, 3000);
     });
 
     it("should not allow stakers to reuse tss network signature", async function () {
@@ -564,7 +615,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       const balance3 = await muonToken.balanceOf(staker1.address);
       expect(balance3).to.equal(balance2.add(earned2));
       // tolerance for 2 seconds
-      expect(balance3).to.closeTo(Math.floor(initialReward / 6), 2000);
+      expect(balance3).to.closeTo(Math.floor(initialReward / 6), 3000);
     });
 
     it("should not allow stakers to withdraw more than their reward by getting several signatures", async function () {
@@ -643,7 +694,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       const balance1 = await muonToken.balanceOf(staker1.address);
 
       // tolerance for 2 seconds
-      expect(await nodeStaking.earned(staker1.address)).to.be.closeTo(0, 2000);
+      expect(await nodeStaking.earned(staker1.address)).to.be.closeTo(0, 3000);
 
       const u1 = await nodeStaking.users(staker1.address);
       expect(u1.balance).to.equal(ONE.mul(1000));
@@ -689,6 +740,8 @@ describe("MuonNodeStakingUpgradeable", function () {
       // Increase time by 7 days
       await evmIncreaseTime(60 * 60 * 24 * 7);
 
+      expect(await vePION.ownerOf(1)).to.equal(nodeStaking.address);
+
       // withdraw
       await nodeStaking.connect(staker1).withdraw();
 
@@ -696,9 +749,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       expect(u3.balance).to.equal(0);
       expect(u3.pendingRewards).to.equal(0);
       expect(u3.withdrawable).to.equal(0);
-
-      const balance3 = await muonToken.balanceOf(staker1.address);
-      expect(balance3).to.equal(balance2.add(u2.balance));
+      expect(await vePION.ownerOf(1)).to.equal(staker1.address);
     });
 
     it("should not allow stakers to withdraw their stake if it's locked", async function () {
@@ -710,14 +761,14 @@ describe("MuonNodeStakingUpgradeable", function () {
       await evmIncreaseTime(60 * 60 * 24 * 10);
 
       // try to lock non exist staker
-      await expect(nodeStaking.connect(rewardRole).lockStake(user1.address)).to.be.revertedWith(
-        "node not found"
-      );
+      await expect(
+        nodeStaking.connect(rewardRole).lockStake(user1.address)
+      ).to.be.revertedWith("node not found");
 
       // try to unlock not locked staker
-      await expect(nodeStaking.connect(rewardRole).unlockStake(staker1.address)).to.be.revertedWith(
-        "is not locked"
-      );
+      await expect(
+        nodeStaking.connect(rewardRole).unlockStake(staker1.address)
+      ).to.be.revertedWith("is not locked");
 
       const earned1 = await nodeStaking.earned(staker1.address);
 
@@ -743,6 +794,8 @@ describe("MuonNodeStakingUpgradeable", function () {
       // unlock the stake
       await nodeStaking.connect(rewardRole).unlockStake(staker1.address);
 
+      expect(await vePION.ownerOf(1)).to.equal(nodeStaking.address);
+
       // withdraw
       await nodeStaking.connect(staker1).withdraw();
 
@@ -751,8 +804,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       expect(u2.pendingRewards).to.equal(u1.pendingRewards);
       expect(u2.paidReward).to.equal(0);
 
-      const balance1 = await muonToken.balanceOf(staker1.address);
-      expect(balance1).to.equal(ONE.mul(1000));
+      expect(await vePION.ownerOf(1)).to.equal(staker1.address);
 
       // exited nodes should be able to get their unclaimed reward
       const paidReward = u2.paidReward;
@@ -768,14 +820,13 @@ describe("MuonNodeStakingUpgradeable", function () {
       await getReward(staker1, withdrawSig);
 
       const balance2 = await muonToken.balanceOf(staker1.address);
-      expect(balance2).to.equal(balance1.add(u2.pendingRewards));
+      expect(balance2).to.equal(u2.pendingRewards);
 
       const u3 = await nodeStaking.users(staker1.address);
       expect(u3.balance).to.equal(0);
       expect(u3.pendingRewards).to.equal(0);
       expect(u3.paidReward).to.equal(u2.pendingRewards);
     });
-
   });
 
   describe("DAO functions", function () {

@@ -5,7 +5,9 @@ pragma solidity >=0.8.0 <0.9.0;
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "./IMuonNodeManager.sol";
+import "@openzeppelin/contracts-upgradeable/interfaces/IERC721Upgradeable.sol";
+import "./IMuonNodeManagerV2.sol";
+import "./IVePION.sol";
 import "./utils/SchnorrSECP256K1Verifier.sol";
 
 /**
@@ -16,10 +18,6 @@ import "./utils/SchnorrSECP256K1Verifier.sol";
  * - addMuonNode
  * Lets the users stake more than a predefined minimum
  * amount of tokens and add a node.
- *
- * - stakeMore
- * Existing nodes can stake more. The rewards will be distributed
- * based on the staked amounts
  *
  * - requestExit
  * Nodes that want to exit the network, need to call this function
@@ -90,6 +88,19 @@ contract MuonNodeStakingUpgradeableV2 is
     // stakerAddress => bool
     mapping(address => bool) public lockedStakes;
 
+    address public vePion;
+
+    address[] public stakingTokens;
+
+    // token => multiplier * 1e18
+    mapping(address => uint256) public stakingTokensMultiplier;
+
+    // tier => maxStakeAmount
+    mapping(uint64 => uint256) public tiersMaxStakeAmount;
+
+    // stakerAddress => vePion id
+    mapping(address => uint256) public usersTokenId;
+
     event Staked(address indexed stakerAddress, uint256 amount);
     event Withdrawn(address indexed stakerAddress, uint256 amount);
     event RewardGot(bytes reqId, address indexed stakerAddress, uint256 amount);
@@ -97,8 +108,7 @@ contract MuonNodeStakingUpgradeableV2 is
     event MuonNodeAdded(
         address indexed nodeAddress,
         address indexed stakerAddress,
-        string peerId,
-        uint256 stakeAmount
+        string peerId
     );
     event RewardsDistributed(
         uint256 reward,
@@ -112,6 +122,8 @@ contract MuonNodeStakingUpgradeableV2 is
     event MuonPublicKeyUpdated(PublicKey muonPublicKey);
     event StakeLocked(address indexed stakerAddress);
     event StakeUnlocked(address indexed stakerAddress);
+    event StakingTokenAdded(address indexed token, uint256 multiplier);
+    event TierMaxStakeUpdated(uint64 tier, uint256 maxStakeAmount);
 
     /**
      * @dev Modifier that updates the reward parameters
@@ -134,7 +146,8 @@ contract MuonNodeStakingUpgradeableV2 is
         address nodeManagerAddress,
         address verifierAddress,
         uint256 _muonAppId,
-        PublicKey memory _muonPublicKey
+        PublicKey memory _muonPublicKey,
+        address _vePion
     ) internal initializer {
         __AccessControl_init();
 
@@ -154,6 +167,7 @@ contract MuonNodeStakingUpgradeableV2 is
         verifier.validatePubKey(_muonPublicKey.x);
         muonPublicKey = _muonPublicKey;
         muonAppId = _muonAppId;
+        vePion = _vePion;
     }
 
     function initialize(
@@ -161,14 +175,16 @@ contract MuonNodeStakingUpgradeableV2 is
         address nodeManagerAddress,
         address verifierAddress,
         uint256 _muonAppId,
-        PublicKey memory _muonPublicKey
+        PublicKey memory _muonPublicKey,
+        address _vePion
     ) external initializer {
         __MuonNodeStakingUpgradeable_init(
             muonTokenAddress,
             nodeManagerAddress,
             verifierAddress,
             _muonAppId,
-            _muonPublicKey
+            _muonPublicKey,
+            _vePion
         );
     }
 
@@ -177,26 +193,66 @@ contract MuonNodeStakingUpgradeableV2 is
         initializer
     {}
 
-    /**
-     * @dev Existing nodes can stake more using this method.
-     * The total staked amount should be less
-     * than `maxStakeAmountPerNode`
-     */
-    function stakeMore(uint256 amount) public {
+    function addStakingToken(address token, uint256 multiplier)
+        external
+        onlyRole(DAO_ROLE)
+    {
+        bool exists = false;
+        for (uint256 i = 0; i < stakingTokens.length; i++) {
+            if (stakingTokens[i] == token) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            stakingTokens.push(token);
+        }
+
+        stakingTokensMultiplier[token] = multiplier;
+        emit StakingTokenAdded(token, multiplier);
+    }
+
+    function valueOfVePion(uint256 tokenId)
+        public
+        view
+        returns (uint256 amount)
+    {
+        uint256[] memory lockedAmounts = IVePION(vePion).getLockedOf(
+            tokenId,
+            stakingTokens
+        );
+        amount = 0;
+        for (uint256 i = 0; i < lockedAmounts.length; i++) {
+            address token = stakingTokens[i];
+            amount +=
+                (stakingTokensMultiplier[token] * lockedAmounts[i]) /
+                1e18;
+        }
+        return amount;
+    }
+
+    function updateStaking() public updateReward(msg.sender) {
         IMuonNodeManager.Node memory node = nodeManager.stakerAddressInfo(
             msg.sender
         );
-        require(node.id != 0 && node.active, "No active node");
-        require(
-            amount + users[msg.sender].balance <= maxStakeAmountPerNode,
-            ">maxStakeAmountPerNode"
-        );
-        _stake(amount);
-    }
+        require(node.id != 0 && node.active, "no active node");
 
-    function _stake(uint256 amount) private updateReward(msg.sender) {
-        muonToken.transferFrom(msg.sender, address(this), amount);
-        users[msg.sender].balance += amount;
+        uint256 tokenId = usersTokenId[msg.sender];
+        require(tokenId != 0, "no staking NFT");
+
+        uint256 amount = valueOfVePion(tokenId);
+        require(
+            amount >= minStakeAmountPerNode,
+            "the amount is not enough for running a node"
+        );
+
+        uint64 tier = nodeManager.getTier(node.id);
+        uint256 maxStakeAmount = tiersMaxStakeAmount[tier];
+        if (amount > maxStakeAmount) {
+            amount = maxStakeAmount;
+        }
+        totalStaked -= users[msg.sender].balance;
+        users[msg.sender].balance = amount;
         totalStaked += amount;
         emit Staked(msg.sender, amount);
     }
@@ -221,7 +277,14 @@ contract MuonNodeStakingUpgradeableV2 is
         uint256 amount = users[msg.sender].balance;
         require(amount > 0, "balance=0");
         users[msg.sender].balance = 0;
-        muonToken.transfer(msg.sender, amount);
+
+        uint256 tokenId = usersTokenId[msg.sender];
+        IERC721Upgradeable(vePion).safeTransferFrom(
+            address(this),
+            msg.sender,
+            tokenId
+        );
+        usersTokenId[msg.sender] = 0;
         emit Withdrawn(msg.sender, amount);
     }
 
@@ -321,24 +384,34 @@ contract MuonNodeStakingUpgradeableV2 is
     function addMuonNode(
         address nodeAddress,
         string calldata peerId,
-        uint256 initialStakeAmount
+        uint256 tokenId
     ) public {
         require(
-            initialStakeAmount >= minStakeAmountPerNode,
-            "initialStakeAmount is not enough for running a node"
+            usersTokenId[msg.sender] == 0,
+            "This node already staked an NFT"
         );
+
+        uint256 amount = valueOfVePion(tokenId);
         require(
-            initialStakeAmount <= maxStakeAmountPerNode,
-            ">maxStakeAmountPerNode"
+            amount >= minStakeAmountPerNode,
+            "the amount is not enough for running a node"
         );
-        _stake(initialStakeAmount);
+
+        IERC721Upgradeable(vePion).transferFrom(
+            msg.sender,
+            address(this),
+            tokenId
+        );
+        usersTokenId[msg.sender] = tokenId;
+
         nodeManager.addNode(
             nodeAddress,
             msg.sender, // stakerAddress,
             peerId,
             true // active
         );
-        emit MuonNodeAdded(nodeAddress, msg.sender, peerId, initialStakeAmount);
+
+        emit MuonNodeAdded(nodeAddress, msg.sender, peerId);
     }
 
     /**
@@ -408,10 +481,7 @@ contract MuonNodeStakingUpgradeableV2 is
      * @dev Allows the admins to lock users' stake.
      * @param stakerAddress The staker's address.
      */
-    function lockStake(address stakerAddress)
-        public
-        onlyRole(REWARD_ROLE)
-    {
+    function lockStake(address stakerAddress) public onlyRole(REWARD_ROLE) {
         IMuonNodeManager.Node memory node = nodeManager.stakerAddressInfo(
             stakerAddress
         );
@@ -425,10 +495,7 @@ contract MuonNodeStakingUpgradeableV2 is
      * @dev Allows the admins to unlock users' stake.
      * @param stakerAddress The staker's address.
      */
-    function unlockStake(address stakerAddress)
-        public
-        onlyRole(REWARD_ROLE)
-    {
+    function unlockStake(address stakerAddress) public onlyRole(REWARD_ROLE) {
         require(lockedStakes[stakerAddress], "is not locked");
 
         lockedStakes[stakerAddress] = false;
@@ -465,5 +532,13 @@ contract MuonNodeStakingUpgradeableV2 is
 
         muonPublicKey = _muonPublicKey;
         emit MuonPublicKeyUpdated(_muonPublicKey);
+    }
+
+    function setTierMaxStakeAmount(uint64 tier, uint256 maxStakeAmount)
+        public
+        onlyRole(DAO_ROLE)
+    {
+        tiersMaxStakeAmount[tier] = maxStakeAmount;
+        emit TierMaxStakeUpdated(tier, maxStakeAmount);
     }
 }
