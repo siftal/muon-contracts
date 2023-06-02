@@ -201,14 +201,14 @@ describe("MuonNodeManagerUpgradeable", function () {
     });
 
     it("should return all nodes between the given ids", async function () {
-      const nodes = await nodeManager.getAllNodes(1, 2);
+      const nodes = await nodeManager.getEditedNodes(0, 1, 2);
       expect(nodes.length).to.equal(2);
       expect(nodes[0].peerId).to.equal(peerId1);
       expect(nodes[1].peerId).to.equal(peerId2);
     });
 
     it("should return empty array if no nodes found", async function () {
-      const nodes = await nodeManager.getAllNodes(0, 4);
+      const nodes = await nodeManager.getEditedNodes(0, 0, 4);
       expect(nodes.length).to.equal(3);
     });
   });
@@ -257,8 +257,9 @@ describe("MuonNodeManagerUpgradeable", function () {
         .reverted;
 
       await nodeManager.connect(daoRole).addNodeRole(role);
-      await expect(nodeManager.connect(adminRole).setNodeRole(role, nodeId)).to
-        .be.reverted;
+      const roleId = await nodeManager.roleIds(role);
+      await expect(nodeManager.connect(adminRole).setNodeRole(nodeId, roleId))
+        .to.be.reverted;
     });
 
     it("reverts if the role is not added yet", async () => {
@@ -268,13 +269,14 @@ describe("MuonNodeManagerUpgradeable", function () {
 
       const nodeId = 1;
       const role = ethers.utils.solidityKeccak256(["string"], ["poa"]);
+      const roleId = await nodeManager.roleIds(role);
 
       await expect(
-        nodeManager.connect(daoRole).setNodeRole(role, nodeId)
+        nodeManager.connect(daoRole).setNodeRole(nodeId, roleId)
       ).to.be.revertedWith("unknown role");
 
       await expect(
-        nodeManager.connect(daoRole).unsetNodeRole(role, nodeId)
+        nodeManager.connect(daoRole).unsetNodeRole(nodeId, roleId)
       ).be.revertedWith("unknown role");
     });
 
@@ -291,28 +293,32 @@ describe("MuonNodeManagerUpgradeable", function () {
         ["deployers"]
       );
       await nodeManager.connect(daoRole).addNodeRole(roleDeployers);
-      await nodeManager.connect(daoRole).setNodeRole(roleDeployers, nodeId);
-      expect(await nodeManager.nodeHasRole(roleDeployers, nodeId)).to.be.true;
+      const roleIdDeployers = await nodeManager.roleIds(roleDeployers);
+      await nodeManager.connect(daoRole).setNodeRole(nodeId, roleIdDeployers);
+      expect(await nodeManager.nodeHasRole(nodeId, roleDeployers)).to.be.true;
       let node = await nodeManager.getNode(nodeId);
       let nodeRoles = node.roles.map((role) => role.toNumber());
       expect(nodeRoles.includes(1)).to.be.true;
 
       const rolePoa = ethers.utils.solidityKeccak256(["string"], ["poa"]);
       await nodeManager.connect(daoRole).addNodeRole(rolePoa);
-      await nodeManager.connect(daoRole).setNodeRole(rolePoa, nodeId);
-      expect(await nodeManager.nodeHasRole(rolePoa, nodeId)).to.be.true;
+      const roleIdPoa = await nodeManager.roleIds(rolePoa);
+      await nodeManager.connect(daoRole).setNodeRole(nodeId, roleIdPoa);
+      expect(await nodeManager.nodeHasRole(nodeId, rolePoa)).to.be.true;
 
       const nodeRoleSetEvents = await nodeManager.queryFilter(
-        nodeManager.filters.NodeRoleSet(null, nodeId)
+        nodeManager.filters.NodeRoleSet(nodeId, null)
       );
 
-      expect(nodeRoleSetEvents[0].args.role).to.equal(roleDeployers);
+      console.log(nodeRoleSetEvents)
+
       expect(nodeRoleSetEvents[0].args.nodeId).to.equal(nodeId);
+      expect(nodeRoleSetEvents[0].args.roleId).to.equal(roleIdDeployers);
 
-      expect(nodeRoleSetEvents[1].args.role).to.equal(rolePoa);
       expect(nodeRoleSetEvents[1].args.nodeId).to.equal(nodeId);
+      expect(nodeRoleSetEvents[1].args.roleId).to.equal(roleIdPoa);
 
-      const nodes = await nodeManager.getAllNodes(1, 1000);
+      const nodes = await nodeManager.getEditedNodes(0, 1, 1000);
       node = nodes[0];
       nodeRoles = node.roles.map((role) => role.toNumber());
       expect(nodeRoles).to.deep.equal([1, 2]);
@@ -336,19 +342,21 @@ describe("MuonNodeManagerUpgradeable", function () {
         ["deployers"]
       );
       await nodeManager.connect(daoRole).addNodeRole(roleDeployers);
-      await nodeManager.connect(daoRole).setNodeRole(roleDeployers, nodeId);
-      expect(await nodeManager.nodeHasRole(roleDeployers, nodeId)).to.be.true;
+      const roleIdDeployers = await nodeManager.roleIds(roleDeployers);
+      await nodeManager.connect(daoRole).setNodeRole(nodeId, roleIdDeployers);
+      expect(await nodeManager.nodeHasRole(nodeId, roleDeployers)).to.be.true;
 
       const rolePoa = ethers.utils.solidityKeccak256(["string"], ["poa"]);
       await nodeManager.connect(daoRole).addNodeRole(rolePoa);
-      await nodeManager.connect(daoRole).setNodeRole(rolePoa, nodeId);
-      expect(await nodeManager.nodeHasRole(rolePoa, nodeId)).to.be.true;
+      const roleIdPoa = await nodeManager.roleIds(rolePoa);
+      await nodeManager.connect(daoRole).setNodeRole(nodeId, roleIdPoa);
+      expect(await nodeManager.nodeHasRole(nodeId, rolePoa)).to.be.true;
 
       let node = await nodeManager.getNode(nodeId);
       let nodeRoles = node.roles.map((role) => role.toNumber());
       expect(nodeRoles).to.deep.equal([1, 2]);
 
-      let nodes = await nodeManager.getAllNodes(1, 1000);
+      let nodes = await nodeManager.getEditedNodes(0, 1, 1000);
       node = nodes[0];
       nodeRoles = node.roles.map((role) => role.toNumber());
       expect(nodeRoles).to.deep.equal([1, 2]);
@@ -358,16 +366,16 @@ describe("MuonNodeManagerUpgradeable", function () {
       nodeRoles = node.roles.map((role) => role.toNumber());
       expect(nodeRoles).to.deep.equal([1, 2]);
 
-      await nodeManager.connect(daoRole).unsetNodeRole(roleDeployers, nodeId);
-      expect(await nodeManager.nodeHasRole(roleDeployers, nodeId)).to.be.false;
-      expect(await nodeManager.nodeHasRole(rolePoa, nodeId)).to.be.true;
+      await nodeManager.connect(daoRole).unsetNodeRole(nodeId, roleIdDeployers);
+      expect(await nodeManager.nodeHasRole(nodeId, roleDeployers)).to.be.false;
+      expect(await nodeManager.nodeHasRole(nodeId, rolePoa)).to.be.true;
 
       node = await nodeManager.getNode(nodeId);
       nodeRoles = node.roles.map((role) => role.toNumber());
       expect(nodeRoles.includes(1)).to.be.false;
       expect(nodeRoles.includes(2)).to.be.true;
 
-      nodes = await nodeManager.getAllNodes(1, 1000);
+      nodes = await nodeManager.getEditedNodes(0, 1, 1000);
       node = nodes[0];
       nodeRoles = node.roles.map((role) => role.toNumber());
       expect(nodeRoles).to.deep.equal([2]);
@@ -413,8 +421,9 @@ describe("MuonNodeManagerUpgradeable", function () {
       ["deployers"]
     );
     await nodeManager.connect(daoRole).addNodeRole(roleDeployers);
-    await nodeManager.connect(daoRole).setNodeRole(roleDeployers, nodeId);
-    expect(await nodeManager.nodeHasRole(roleDeployers, nodeId)).to.be.true;
+    const roleIdDeployers = await nodeManager.roleIds(roleDeployers);
+    await nodeManager.connect(daoRole).setNodeRole(nodeId, roleIdDeployers);
+    expect(await nodeManager.nodeHasRole(nodeId, roleDeployers)).to.be.true;
 
     // get the list of the nodes that were edited in the past hour
     const endTime = (await ethers.provider.getBlock("latest")).timestamp;

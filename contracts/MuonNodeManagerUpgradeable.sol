@@ -43,6 +43,9 @@ contract MuonNodeManagerUpgradeable is
     // role id => node id => bool
     mapping(uint64 => mapping(uint64 => bool)) public nodesRoles;
 
+    // node id => tier
+    mapping(uint64 => uint64) public tiers;
+
     event AddNode(uint64 indexed nodeId, Node node);
     event DeactiveNode(uint64 indexed nodeId);
     event EditNodeAddress(
@@ -53,8 +56,8 @@ contract MuonNodeManagerUpgradeable is
     event EditPeerId(uint64 indexed nodeId, string oldId, string newId);
     event Config(string indexed key, string value);
     event NodeRoleAdded(bytes32 indexed role, uint64 roleId);
-    event NodeRoleSet(bytes32 indexed role, uint64 indexed nodeId);
-    event NodeRoleUnset(bytes32 indexed role, uint64 indexed nodeId);
+    event NodeRoleSet(uint64 indexed nodeId, uint64 indexed roleId);
+    event NodeRoleUnset(uint64 indexed nodeId, uint64 indexed roleId);
 
     modifier updateState() {
         lastUpdateTime = block.timestamp;
@@ -215,7 +218,7 @@ contract MuonNodeManagerUpgradeable is
     /**
      * @dev Returns whether a given node has a given role.
      */
-    function nodeHasRole(bytes32 role, uint64 nodeId)
+    function nodeHasRole(uint64 nodeId, bytes32 role)
         public
         view
         returns (bool)
@@ -237,34 +240,32 @@ contract MuonNodeManagerUpgradeable is
     /**
      * @dev Adds a role to a given node.
      */
-    function setNodeRole(bytes32 role, uint64 nodeId)
+    function setNodeRole(uint64 nodeId, uint64 roleId)
         public
         onlyRole(DAO_ROLE)
         updateState
     {
         require(nodes[nodeId].active, "is not an active node");
-        require(roleIds[role] != 0, "unknown role");
+        require(roleId > 0 && roleId <= lastRoleId, "unknown role");
 
-        uint64 roleId = roleIds[role];
         if (!nodesRoles[roleId][nodeId]) {
             nodesRoles[roleId][nodeId] = true;
             nodes[nodeId].roles.push(roleId);
             nodes[nodeId].lastEditTime = block.timestamp;
-            emit NodeRoleSet(role, nodeId);
+            emit NodeRoleSet(nodeId, roleId);
         }
     }
 
     /**
      * @dev Removes a role from a given node.
      */
-    function unsetNodeRole(bytes32 role, uint64 nodeId)
+    function unsetNodeRole(uint64 nodeId, uint64 roleId)
         public
         onlyRole(DAO_ROLE)
         updateState
     {
-        require(roleIds[role] != 0, "unknown role");
+        require(roleId > 0 && roleId <= lastRoleId, "unknown role");
 
-        uint64 roleId = roleIds[role];
         if (nodesRoles[roleId][nodeId]) {
             nodesRoles[roleId][nodeId] = false;
             for (uint256 i = 0; i < nodes[nodeId].roles.length; i++) {
@@ -277,8 +278,18 @@ contract MuonNodeManagerUpgradeable is
                 }
             }
             nodes[nodeId].lastEditTime = block.timestamp;
-            emit NodeRoleUnset(role, nodeId);
+            emit NodeRoleUnset(nodeId, roleId);
         }
+    }
+
+    /**
+     * @dev Sets node's tier
+     */
+    function setTier(uint64 nodeId, uint64 tier)
+        public
+        onlyRole(DAO_ROLE)
+    {
+        tiers[nodeId] = tier;
     }
 
     /**
@@ -295,26 +306,6 @@ contract MuonNodeManagerUpgradeable is
         Node memory node = nodes[nodeId];
         node.roles = getNodeRoles(nodeId);
         return node;
-    }
-
-    /**
-     * @dev Returns a list of the nodes.
-     */
-    function getAllNodes(uint64 _from, uint64 _to)
-        public
-        view
-        returns (Node[] memory nodesList)
-    {
-        _from = _from > 0 ? _from : 1;
-        _to = _to <= lastNodeId ? _to : lastNodeId;
-        require(_from <= _to, "invalid amounts");
-        uint64 count = _to - _from + 1;
-
-        nodesList = new Node[](count);
-        for (uint64 i = 0; i < count; i++) {
-            nodesList[i] = nodes[i + _from];
-            nodesList[i].roles = getNodeRoles(i + _from);
-        }
     }
 
     /**
@@ -368,5 +359,12 @@ contract MuonNodeManagerUpgradeable is
         returns (Node memory node)
     {
         node = nodes[stakerAddressIds[_addr]];
+    }
+
+    /**
+     * @dev Returns the tier of the node.
+     */
+    function getTier(uint64 nodeId) external view override returns (uint64) {
+        return tiers[nodeId];
     }
 }
