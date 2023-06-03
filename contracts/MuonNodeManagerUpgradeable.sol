@@ -64,6 +64,11 @@ contract MuonNodeManagerUpgradeable is
         _;
     }
 
+    modifier updateNodeState(uint64 nodeId) {
+        nodes[nodeId].lastEditTime = block.timestamp;
+        _;
+    }
+
     function __MuonNodeManagerUpgradeable_init() internal initializer {
         __AccessControl_init();
 
@@ -109,6 +114,7 @@ contract MuonNodeManagerUpgradeable is
         override
         onlyRole(ADMIN_ROLE)
         updateState
+        updateNodeState(nodeId)
     {
         require(nodes[nodeId].id == nodeId, "Not found");
 
@@ -116,7 +122,6 @@ contract MuonNodeManagerUpgradeable is
 
         nodes[nodeId].endTime = block.timestamp;
         nodes[nodeId].active = false;
-        nodes[nodeId].lastEditTime = block.timestamp;
 
         emit DeactiveNode(nodeId);
     }
@@ -128,6 +133,7 @@ contract MuonNodeManagerUpgradeable is
         public
         onlyRole(ADMIN_ROLE)
         updateState
+        updateNodeState(nodeId)
     {
         require(
             nodes[nodeId].id == nodeId && nodes[nodeId].active,
@@ -139,7 +145,6 @@ contract MuonNodeManagerUpgradeable is
         nodeAddressIds[nodes[nodeId].nodeAddress] = 0;
 
         nodes[nodeId].nodeAddress = nodeAddress;
-        nodes[nodeId].lastEditTime = block.timestamp;
 
         emit EditNodeAddress(nodeId, nodes[nodeId].nodeAddress, nodeAddress);
     }
@@ -244,6 +249,7 @@ contract MuonNodeManagerUpgradeable is
         public
         onlyRole(DAO_ROLE)
         updateState
+        updateNodeState(nodeId)
     {
         require(nodes[nodeId].active, "is not an active node");
         require(roleId > 0 && roleId <= lastRoleId, "unknown role");
@@ -251,7 +257,6 @@ contract MuonNodeManagerUpgradeable is
         if (!nodesRoles[roleId][nodeId]) {
             nodesRoles[roleId][nodeId] = true;
             nodes[nodeId].roles.push(roleId);
-            nodes[nodeId].lastEditTime = block.timestamp;
             emit NodeRoleSet(nodeId, roleId);
         }
     }
@@ -263,6 +268,7 @@ contract MuonNodeManagerUpgradeable is
         public
         onlyRole(DAO_ROLE)
         updateState
+        updateNodeState(nodeId)
     {
         require(roleId > 0 && roleId <= lastRoleId, "unknown role");
 
@@ -277,7 +283,6 @@ contract MuonNodeManagerUpgradeable is
                     break;
                 }
             }
-            nodes[nodeId].lastEditTime = block.timestamp;
             emit NodeRoleUnset(nodeId, roleId);
         }
     }
