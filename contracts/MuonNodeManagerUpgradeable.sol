@@ -40,8 +40,8 @@ contract MuonNodeManagerUpgradeable is
     uint64 public lastRoleId;
     // hash(role) => role id
     mapping(bytes32 => uint64) public roleIds;
-    // role id => node id => bool
-    mapping(uint64 => mapping(uint64 => bool)) public nodesRoles;
+    // role id => node id => index + 1
+    mapping(uint64 => mapping(uint64 => uint16)) public nodesRoles;
 
     // node id => tier
     mapping(uint64 => uint64) public tiers;
@@ -228,7 +228,7 @@ contract MuonNodeManagerUpgradeable is
         view
         returns (bool)
     {
-        return nodesRoles[roleIds[role]][nodeId];
+        return nodesRoles[roleIds[role]][nodeId] > 0;
     }
 
     /**
@@ -253,12 +253,14 @@ contract MuonNodeManagerUpgradeable is
     {
         require(nodes[nodeId].active, "is not an active node");
         require(roleId > 0 && roleId <= lastRoleId, "unknown role");
+        require(
+            nodesRoles[roleId][nodeId] == 0,
+            "this role already set for this node"
+        );
 
-        if (!nodesRoles[roleId][nodeId]) {
-            nodesRoles[roleId][nodeId] = true;
-            nodes[nodeId].roles.push(roleId);
-            emit NodeRoleSet(nodeId, roleId);
-        }
+        nodes[nodeId].roles.push(roleId);
+        nodesRoles[roleId][nodeId] = uint16(nodes[nodeId].roles.length);
+        emit NodeRoleSet(nodeId, roleId);
     }
 
     /**
@@ -271,29 +273,24 @@ contract MuonNodeManagerUpgradeable is
         updateNodeState(nodeId)
     {
         require(roleId > 0 && roleId <= lastRoleId, "unknown role");
+        require(
+            nodesRoles[roleId][nodeId] > 0,
+            "this node doesn't have this role"
+        );
 
-        if (nodesRoles[roleId][nodeId]) {
-            nodesRoles[roleId][nodeId] = false;
-            for (uint256 i = 0; i < nodes[nodeId].roles.length; i++) {
-                if (nodes[nodeId].roles[i] == roleId) {
-                    nodes[nodeId].roles[i] = nodes[nodeId].roles[
-                        nodes[nodeId].roles.length - 1
-                    ];
-                    nodes[nodeId].roles.pop();
-                    break;
-                }
-            }
-            emit NodeRoleUnset(nodeId, roleId);
-        }
+        uint16 index = nodesRoles[roleId][nodeId] - 1;
+        uint64 lRoleId = nodes[nodeId].roles[nodes[nodeId].roles.length - 1];
+        nodes[nodeId].roles[index] = lRoleId;
+        nodesRoles[lRoleId][nodeId] = index + 1;
+        nodes[nodeId].roles.pop();
+        nodesRoles[roleId][nodeId] = 0;
+        emit NodeRoleUnset(nodeId, roleId);
     }
 
     /**
      * @dev Sets node's tier
      */
-    function setTier(uint64 nodeId, uint64 tier)
-        public
-        onlyRole(DAO_ROLE)
-    {
+    function setTier(uint64 nodeId, uint64 tier) public onlyRole(DAO_ROLE) {
         tiers[nodeId] = tier;
     }
 

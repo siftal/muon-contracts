@@ -22,7 +22,7 @@ describe("MuonNodeManagerUpgradeable", function () {
 
   let nodeManager: MuonNodeManagerUpgradeable;
 
-  beforeEach(async function () {
+  before(async function () {
     [
       deployer,
       adminRole,
@@ -35,7 +35,9 @@ describe("MuonNodeManagerUpgradeable", function () {
       staker3,
       user1,
     ] = await ethers.getSigners();
+  });
 
+  beforeEach(async function () {
     const MuonNodeManagerUpgradeable = await ethers.getContractFactory(
       "MuonNodeManagerUpgradeable"
     );
@@ -246,23 +248,31 @@ describe("MuonNodeManagerUpgradeable", function () {
   });
 
   describe("node roles", () => {
-    it("reverts if caller does not have DAO_ROLE", async () => {
+    it("not permitted accounts should not be able to add/set/unset nodes' roles", async () => {
       await nodeManager
         .connect(adminRole)
         .addNode(node1.address, staker1.address, peerId1, true);
       const nodeId = 1;
       const role = ethers.utils.solidityKeccak256(["string"], ["poa"]);
 
-      await expect(nodeManager.connect(adminRole).addNodeRole(role)).to.be
-        .reverted;
+      const DAO_ROLE = await nodeManager.DAO_ROLE();
+      const revertMSG = `AccessControl: account ${adminRole.address.toLowerCase()} is missing role ${DAO_ROLE}`;
+      await expect(
+        nodeManager.connect(adminRole).addNodeRole(role)
+      ).to.be.revertedWith(revertMSG);
 
       await nodeManager.connect(daoRole).addNodeRole(role);
       const roleId = await nodeManager.roleIds(role);
-      await expect(nodeManager.connect(adminRole).setNodeRole(nodeId, roleId))
-        .to.be.reverted;
+      await expect(
+        nodeManager.connect(adminRole).setNodeRole(nodeId, roleId)
+      ).to.be.revertedWith(revertMSG);
+
+      await expect(
+        nodeManager.connect(adminRole).unsetNodeRole(nodeId, roleId)
+      ).to.be.revertedWith(revertMSG);
     });
 
-    it("reverts if the role is not added yet", async () => {
+    it("should not allow to set/unset the roles which not been added yet", async () => {
       await nodeManager
         .connect(adminRole)
         .addNode(node1.address, staker1.address, peerId1, true);
@@ -280,7 +290,7 @@ describe("MuonNodeManagerUpgradeable", function () {
       ).be.revertedWith("unknown role");
     });
 
-    it("adds the role to the node", async () => {
+    it("dao should be able to add/set nodes' roles", async () => {
       const startTime = (await ethers.provider.getBlock("latest")).timestamp;
 
       await nodeManager
@@ -310,8 +320,6 @@ describe("MuonNodeManagerUpgradeable", function () {
         nodeManager.filters.NodeRoleSet(nodeId, null)
       );
 
-      console.log(nodeRoleSetEvents)
-
       expect(nodeRoleSetEvents[0].args.nodeId).to.equal(nodeId);
       expect(nodeRoleSetEvents[0].args.roleId).to.equal(roleIdDeployers);
 
@@ -329,7 +337,7 @@ describe("MuonNodeManagerUpgradeable", function () {
       expect(nodeRoles).to.deep.equal([1, 2]);
     });
 
-    it("removes the role from the node", async () => {
+    it("dao should be able to unset nodes' roles", async () => {
       const startTime = (await ethers.provider.getBlock("latest")).timestamp;
 
       await nodeManager
@@ -387,58 +395,65 @@ describe("MuonNodeManagerUpgradeable", function () {
     });
   });
 
-  it("getEditedNodes", async () => {
-    const startTime = (await ethers.provider.getBlock("latest")).timestamp;
+  describe("get nodes", () => {
+    it("get edited nodes / get all nodes", async () => {
+      const startTime = (await ethers.provider.getBlock("latest")).timestamp;
 
-    for (let i = 1; i <= 10; i++) {
-      await nodeManager
-        .connect(adminRole)
-        .addNode(
-          ethers.Wallet.createRandom().address,
-          ethers.Wallet.createRandom().address,
-          `peerId${i}`,
-          true
-        );
-    }
+      for (let i = 1; i <= 10; i++) {
+        await nodeManager
+          .connect(adminRole)
+          .addNode(
+            ethers.Wallet.createRandom().address,
+            ethers.Wallet.createRandom().address,
+            `peerId${i}`,
+            true
+          );
+      }
 
-    const targetTimestamp = startTime + 2 * 3600;
-    await ethers.provider.send("evm_setNextBlockTimestamp", [targetTimestamp]);
+      const targetTimestamp = startTime + 2 * 3600;
+      await ethers.provider.send("evm_setNextBlockTimestamp", [
+        targetTimestamp,
+      ]);
 
-    for (let i = 1; i <= 5; i++) {
-      await nodeManager
-        .connect(adminRole)
-        .addNode(
-          ethers.Wallet.createRandom().address,
-          ethers.Wallet.createRandom().address,
-          `peerId${i}`,
-          true
-        );
-    }
+      for (let i = 1; i <= 5; i++) {
+        await nodeManager
+          .connect(adminRole)
+          .addNode(
+            ethers.Wallet.createRandom().address,
+            ethers.Wallet.createRandom().address,
+            `peerId${i}`,
+            true
+          );
+      }
 
-    const nodeId = 1;
-    const roleDeployers = ethers.utils.solidityKeccak256(
-      ["string"],
-      ["deployers"]
-    );
-    await nodeManager.connect(daoRole).addNodeRole(roleDeployers);
-    const roleIdDeployers = await nodeManager.roleIds(roleDeployers);
-    await nodeManager.connect(daoRole).setNodeRole(nodeId, roleIdDeployers);
-    expect(await nodeManager.nodeHasRole(nodeId, roleDeployers)).to.be.true;
+      const nodeId = 1;
+      const roleDeployers = ethers.utils.solidityKeccak256(
+        ["string"],
+        ["deployers"]
+      );
+      await nodeManager.connect(daoRole).addNodeRole(roleDeployers);
+      const roleIdDeployers = await nodeManager.roleIds(roleDeployers);
+      await nodeManager.connect(daoRole).setNodeRole(nodeId, roleIdDeployers);
+      expect(await nodeManager.nodeHasRole(nodeId, roleDeployers)).to.be.true;
 
-    // get the list of the nodes that were edited in the past hour
-    const endTime = (await ethers.provider.getBlock("latest")).timestamp;
-    const lastEditTime = endTime - 3600;
-    const editedNodesList = await nodeManager.getEditedNodes(
-      lastEditTime,
-      1,
-      1000
-    );
+      // get the list of the nodes that were edited in the past hour
+      const endTime = (await ethers.provider.getBlock("latest")).timestamp;
+      const lastEditTime = endTime - 3600;
+      const editedNodesList = await nodeManager.getEditedNodes(
+        lastEditTime,
+        1,
+        1000
+      );
 
-    expect(editedNodesList).to.have.lengthOf(6);
-    expect(await nodeManager.lastNodeId()).to.be.equal(15);
+      expect(editedNodesList).to.have.lengthOf(6);
+      const node = editedNodesList[0];
+      const nodeRoles = node.roles.map((role) => role.toNumber());
+      expect(nodeRoles).to.deep.equal([1]);
 
-    const node = editedNodesList[0];
-    const nodeRoles = node.roles.map((role) => role.toNumber());
-    expect(nodeRoles).to.deep.equal([1]);
+      const allNodesList = await nodeManager.getEditedNodes(0, 1, 1000);
+      expect(allNodesList).to.have.lengthOf(15);
+
+      expect(await nodeManager.lastNodeId()).to.be.equal(15);
+    });
   });
 });
