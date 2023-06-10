@@ -90,6 +90,9 @@ contract MuonNodeStakingUpgradeableV2 is
 
     address public vePion;
 
+    // token address => index + 1
+    mapping(address => uint16) public isStakingToken;
+
     address[] public stakingTokens;
 
     // token => multiplier * 1e18
@@ -122,7 +125,7 @@ contract MuonNodeStakingUpgradeableV2 is
     event MuonPublicKeyUpdated(PublicKey muonPublicKey);
     event StakeLocked(address indexed stakerAddress);
     event StakeUnlocked(address indexed stakerAddress);
-    event StakingTokenAdded(address indexed token, uint256 multiplier);
+    event StakingTokenUpdated(address indexed token, uint256 multiplier);
     event TierMaxStakeUpdated(uint64 tier, uint256 maxStakeAmount);
 
     /**
@@ -193,23 +196,36 @@ contract MuonNodeStakingUpgradeableV2 is
         initializer
     {}
 
-    function addStakingToken(address token, uint256 multiplier)
+    function updateStakingTokens(address[] calldata tokens, uint256[] calldata multipliers)
         external
         onlyRole(DAO_ROLE)
     {
-        bool exists = false;
-        for (uint256 i = 0; i < stakingTokens.length; i++) {
-            if (stakingTokens[i] == token) {
-                exists = true;
-                break;
-            }
-        }
-        if (!exists) {
-            stakingTokens.push(token);
-        }
+        require(tokens.length == multipliers.length, "Arrays length mismatch");
 
-        stakingTokensMultiplier[token] = multiplier;
-        emit StakingTokenAdded(token, multiplier);
+        for (uint256 i = 0; i < tokens.length; i++) {
+            address token = tokens[i];
+            uint256 multiplier = multipliers[i];
+
+            if (isStakingToken[token] > 0) {
+                if (multiplier == 0) {
+                    uint16 tokenIndex = isStakingToken[token] - 1;
+                    address lastToken = stakingTokens[stakingTokens.length - 1];
+
+                    stakingTokens[tokenIndex] = lastToken;
+                    isStakingToken[lastToken] = isStakingToken[token];
+                    stakingTokens.pop();
+                    isStakingToken[token] = 0;
+                }
+
+                stakingTokensMultiplier[token] = multiplier;
+            } else {
+                require(multiplier > 0, "Multiplier must be greater than 0");
+                stakingTokens.push(token);
+                stakingTokensMultiplier[token] = multiplier;
+                isStakingToken[token] = uint16(stakingTokens.length);
+            }
+            emit StakingTokenUpdated(token, multiplier);
+        }
     }
 
     function valueOfVePion(uint256 tokenId)
@@ -224,9 +240,8 @@ contract MuonNodeStakingUpgradeableV2 is
         amount = 0;
         for (uint256 i = 0; i < lockedAmounts.length; i++) {
             address token = stakingTokens[i];
-            amount +=
-                (stakingTokensMultiplier[token] * lockedAmounts[i]) /
-                1e18;
+            uint256 multiplier = stakingTokensMultiplier[token];
+            amount += (multiplier * lockedAmounts[i]) / 1e18;
         }
         return amount;
     }

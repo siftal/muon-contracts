@@ -34,8 +34,19 @@ describe("MuonNodeStakingUpgradeable", function () {
   let nodeStaking: MuonNodeStakingUpgradeableV2;
   let vePION: VePION;
   const thirtyDays = 2592000;
+  const muonTokenMultiplier = ONE;
+  const muonLpTokenMultiplier = ONE.mul(2);
+  const muonAppId =
+    "1566432988060666016333351531685287278204879617528298155619493815104572633831";
+  const muonPublicKey = {
+    x: "0x570513014bbf0ddc4b0ac6b71164ff1186f26053a4df9facd79d9268456090c9",
+    parity: 0,
+  };
+  const tier1MaxStake = ONE.mul(1000);
+  const tier2MaxStake = ONE.mul(4000);
+  const tier3MaxStake = ONE.mul(10000);
 
-  beforeEach(async function () {
+  before(async () => {
     [
       deployer,
       daoRole,
@@ -49,7 +60,9 @@ describe("MuonNodeStakingUpgradeable", function () {
       user1,
       treasury,
     ] = await ethers.getSigners();
+  });
 
+  beforeEach(async function () {
     const SchnorrSECP256K1Verifier = await ethers.getContractFactory(
       "SchnorrSECP256K1Verifier"
     );
@@ -77,13 +90,6 @@ describe("MuonNodeStakingUpgradeable", function () {
     nodeManager = await upgrades.deployProxy(MuonNodeManager, []);
     await nodeManager.deployed();
 
-    const muonAppId =
-      "1566432988060666016333351531685287278204879617528298155619493815104572633831";
-    const muonPublicKey = {
-      x: "0x570513014bbf0ddc4b0ac6b71164ff1186f26053a4df9facd79d9268456090c9",
-      parity: 0,
-    };
-
     const MuonNodeStakingUpgradeableV2 = await ethers.getContractFactory(
       "MuonNodeStakingUpgradeableV2"
     );
@@ -105,18 +111,19 @@ describe("MuonNodeStakingUpgradeable", function () {
       .connect(deployer)
       .grantRole(await nodeStaking.REWARD_ROLE(), rewardRole.address);
 
-    await nodeStaking.connect(daoRole).addStakingToken(muonToken.address, ONE);
-
     await nodeStaking
       .connect(daoRole)
-      .addStakingToken(muonLpToken.address, ONE.mul(2));
+      .updateStakingTokens(
+        [muonToken.address, muonLpToken.address],
+        [muonTokenMultiplier, muonLpTokenMultiplier]
+      );
 
     await vePION.connect(deployer).whitelistTokens([muonLpToken.address]);
     await vePION.connect(deployer).whitelistTransferFor([nodeStaking.address]);
 
-    await nodeStaking.connect(daoRole).setTierMaxStakeAmount(1, ONE.mul(1000));
-    await nodeStaking.connect(daoRole).setTierMaxStakeAmount(2, ONE.mul(4000));
-    await nodeStaking.connect(daoRole).setTierMaxStakeAmount(3, ONE.mul(10000));
+    await nodeStaking.connect(daoRole).setTierMaxStakeAmount(1, tier1MaxStake);
+    await nodeStaking.connect(daoRole).setTierMaxStakeAmount(2, tier2MaxStake);
+    await nodeStaking.connect(daoRole).setTierMaxStakeAmount(3, tier3MaxStake);
 
     await nodeManager
       .connect(deployer)
@@ -144,7 +151,7 @@ describe("MuonNodeStakingUpgradeable", function () {
     await nodeManager.connect(daoRole).setTier(1, 1);
     await nodeStaking.connect(staker1).updateStaking();
     expect((await nodeStaking.users(staker1.address)).balance).to.equal(
-      ONE.mul(1000)
+      tier1MaxStake
     );
 
     await mintVePION(1000, 500, staker2);
@@ -254,7 +261,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       await nodeStaking.connect(staker3).updateStaking();
       expect((await nodeStaking.users(staker3.address)).balance)
         .to.equal(await nodeStaking.tiersMaxStakeAmount(1))
-        .to.equal(ONE.mul(1000));
+        .to.equal(tier1MaxStake);
     });
 
     it("should transfer NFT from the staker to the staking contract when adding a Muon node", async function () {
@@ -830,7 +837,7 @@ describe("MuonNodeStakingUpgradeable", function () {
   });
 
   describe("DAO functions", function () {
-    it("DAO should  be able to update exitPendingPeriod", async function () {
+    it("DAO should be able to update exitPendingPeriod", async function () {
       const newVal = 86400;
       await expect(nodeStaking.connect(daoRole).setExitPendingPeriod(newVal))
         .to.emit(nodeStaking, "ExitPendingPeriodUpdated")
@@ -839,7 +846,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       expect(await nodeStaking.exitPendingPeriod()).to.equal(newVal);
     });
 
-    it("DAO should  be able to update minStakeAmountPerNode", async function () {
+    it("DAO should be able to update minStakeAmountPerNode", async function () {
       const newVal = ONE.mul(10);
       await expect(
         nodeStaking.connect(daoRole).setMinStakeAmountPerNode(newVal)
@@ -850,7 +857,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       expect(await nodeStaking.minStakeAmountPerNode()).to.equal(newVal);
     });
 
-    it("DAO should  be able to update maxStakeAmountPerNode", async function () {
+    it("DAO should be able to update maxStakeAmountPerNode", async function () {
       const newVal = ONE.mul(100);
       await expect(
         nodeStaking.connect(daoRole).setMaxStakeAmountPerNode(newVal)
@@ -861,7 +868,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       expect(await nodeStaking.maxStakeAmountPerNode()).to.equal(newVal);
     });
 
-    it("DAO should  be able to update muonAppId", async function () {
+    it("DAO should be able to update muonAppId", async function () {
       const newVal =
         "1566432988060666016333351531685287278204879617528298155619493815104572633000";
       await expect(nodeStaking.connect(daoRole).setMuonAppId(newVal))
@@ -871,7 +878,7 @@ describe("MuonNodeStakingUpgradeable", function () {
       expect(await nodeStaking.muonAppId()).to.equal(newVal);
     });
 
-    it("DAO should  be able to update muonPublicKey", async function () {
+    it("DAO should be able to update muonPublicKey", async function () {
       const newPublicKey = {
         x: "0x1234567890123456789012345678901234567890123456789012345678901234",
         parity: 1,
@@ -884,6 +891,150 @@ describe("MuonNodeStakingUpgradeable", function () {
       const updatedPublicKey = await nodeStaking.muonPublicKey();
       expect(updatedPublicKey.x).to.equal(newPublicKey.x);
       expect(updatedPublicKey.parity).to.equal(newPublicKey.parity);
+    });
+
+    it("DAO should be able to remove a staking tokens", async () => {
+      const muonTokenIPO = await nodeStaking.isStakingToken(muonToken.address);
+      const muonLpTokenIPO = await nodeStaking.isStakingToken(
+        muonLpToken.address
+      );
+      expect(muonTokenIPO).to.equal(1);
+      expect(muonLpTokenIPO).to.equal(2);
+      expect(await nodeStaking.stakingTokens(muonTokenIPO - 1)).to.equal(
+        muonToken.address
+      );
+      expect(await nodeStaking.stakingTokens(muonLpTokenIPO - 1)).to.equal(
+        muonLpToken.address
+      );
+    });
+
+    it("DAO should be able to add a new staking token", async () => {
+      const dummyToken = ethers.Wallet.createRandom();
+      const dummyTokenMultiplier = ONE.mul(3);
+      await nodeStaking.updateStakingTokens(
+        [dummyToken.address],
+        [dummyTokenMultiplier]
+      );
+      expect(await nodeStaking.isStakingToken(dummyToken.address)).to.equal(3);
+      expect(await nodeStaking.stakingTokens(2)).to.equal(dummyToken.address);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(dummyToken.address)
+      ).to.equal(dummyTokenMultiplier);
+    });
+
+    it("DAO should be able to update the multiplier of an existing staking token", async () => {
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonToken.address)
+      ).to.equal(muonTokenMultiplier);
+      const newMuonTokenMultiplier = ONE.mul(3);
+      await nodeStaking.updateStakingTokens(
+        [muonToken.address],
+        [newMuonTokenMultiplier]
+      );
+      expect(await nodeStaking.isStakingToken(muonToken.address)).to.equal(1);
+      expect(await nodeStaking.isStakingToken(muonLpToken.address)).to.equal(2);
+      expect(await nodeStaking.stakingTokens(0)).to.equal(muonToken.address);
+      expect(await nodeStaking.stakingTokens(1)).to.equal(muonLpToken.address);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonLpToken.address)
+      ).to.equal(muonLpTokenMultiplier);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonToken.address)
+      ).to.equal(newMuonTokenMultiplier);
+    });
+
+    it("DAO should be able to remove a staking token", async () => {
+      const newMuonTokenMultiplier = 0;
+      expect(await nodeStaking.stakingTokens(0)).to.equal(muonToken.address);
+      await nodeStaking.updateStakingTokens(
+        [muonToken.address],
+        [newMuonTokenMultiplier]
+      );
+      expect(await nodeStaking.isStakingToken(muonToken.address)).to.equal(0);
+      expect(await nodeStaking.stakingTokens(0)).to.equal(muonLpToken.address);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonToken.address)
+      ).to.equal(newMuonTokenMultiplier);
+    });
+
+    it("DAO should be able to add or update multiple staking tokens", async () => {
+      const newMuonTokenMultiplier = ONE.mul(4);
+      const newMuonLpTokenMultiplier = ONE.mul(4);
+      const dummyToken1 = ethers.Wallet.createRandom();
+      const dummyToken1Multiplier = ONE.mul(3);
+      const dummyToken2 = ethers.Wallet.createRandom();
+      const dummyToken2Multiplier = ONE.mul(4);
+
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonToken.address)
+      ).to.equal(muonTokenMultiplier);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonLpToken.address)
+      ).to.equal(muonLpTokenMultiplier);
+
+      await nodeStaking.updateStakingTokens(
+        [
+          muonToken.address,
+          dummyToken1.address,
+          dummyToken2.address,
+          muonLpToken.address,
+        ],
+        [
+          newMuonTokenMultiplier,
+          dummyToken1Multiplier,
+          dummyToken2Multiplier,
+          newMuonLpTokenMultiplier,
+        ]
+      );
+
+      expect(await nodeStaking.isStakingToken(muonToken.address)).to.equal(1);
+      expect(await nodeStaking.isStakingToken(muonLpToken.address)).to.equal(2);
+      expect(await nodeStaking.isStakingToken(dummyToken1.address)).to.equal(3);
+      expect(await nodeStaking.isStakingToken(dummyToken2.address)).to.equal(4);
+
+      expect(await nodeStaking.stakingTokens(0)).to.equal(muonToken.address);
+      expect(await nodeStaking.stakingTokens(1)).to.equal(muonLpToken.address);
+      expect(await nodeStaking.stakingTokens(2)).to.equal(dummyToken1.address);
+      expect(await nodeStaking.stakingTokens(3)).to.equal(dummyToken2.address);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonToken.address)
+      ).to.equal(newMuonTokenMultiplier);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonLpToken.address)
+      ).to.equal(newMuonLpTokenMultiplier);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(dummyToken1.address)
+      ).to.equal(dummyToken1Multiplier);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(dummyToken2.address)
+      ).to.equal(dummyToken2Multiplier);
+    });
+
+    it("DAO should be able to remove one staking token and update another", async () => {
+      const newMuonTokenMultiplier = 0;
+      const newMuonLpTokenMultiplier = ONE.mul(4);
+
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonToken.address)
+      ).to.equal(muonTokenMultiplier);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonLpToken.address)
+      ).to.equal(muonLpTokenMultiplier);
+
+      await nodeStaking.updateStakingTokens(
+        [muonLpToken.address, muonToken.address],
+        [newMuonLpTokenMultiplier, newMuonTokenMultiplier]
+      );
+
+      expect(await nodeStaking.isStakingToken(muonToken.address)).to.equal(0);
+      expect(await nodeStaking.isStakingToken(muonLpToken.address)).to.equal(1);
+      expect(await nodeStaking.stakingTokens(0)).to.equal(muonLpToken.address);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonToken.address)
+      ).to.equal(newMuonTokenMultiplier);
+      expect(
+        await nodeStaking.stakingTokensMultiplier(muonLpToken.address)
+      ).to.equal(newMuonLpTokenMultiplier);
     });
   });
 });
