@@ -11,7 +11,6 @@ import "@openzeppelin/contracts-upgradeable/interfaces/IERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
 
 import "./interfaces/IToken.sol";
-import "hardhat/console.sol";
 
 contract BondedToken is
     Initializable,
@@ -184,7 +183,6 @@ contract BondedToken is
         address[] memory tokens,
         uint256[] memory amounts
     ) public whenNotPaused {
-        console.log("#$# lock", msg.sender, tokenId, _ownerOf(tokenId));
         require(_ownerOf(tokenId) != address(0), "ERC721: invalid token ID");
 
         uint256 len = tokens.length;

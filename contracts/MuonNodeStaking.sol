@@ -8,7 +8,6 @@ import "@openzeppelin/contracts-upgradeable/interfaces/IERC721Upgradeable.sol";
 import "./utils/SchnorrSECP256K1Verifier.sol";
 import "./interfaces/IMuonNodeManager.sol";
 import "./interfaces/IBondedToken.sol";
-import "hardhat/console.sol";
 
 contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
