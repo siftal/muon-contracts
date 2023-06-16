@@ -5,11 +5,15 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts-upgradeable/interfaces/IERC721Upgradeable.sol";
-import "./utils/SchnorrSECP256K1Verifier.sol";
+import "./utils/MuonClientBase.sol";
 import "./interfaces/IMuonNodeManager.sol";
 import "./interfaces/IBondedToken.sol";
 
-contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
+contract MuonNodeStaking is
+    Initializable,
+    AccessControlUpgradeable,
+    MuonClientBase
+{
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant DAO_ROLE = keccak256("DAO_ROLE");
     bytes32 public constant REWARD_ROLE = keccak256("REWARD_ROLE");
@@ -28,22 +32,7 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
 
     uint256 public rewardPerTokenStored;
 
-    uint256 public muonAppId;
-
     uint256 public REWARD_PERIOD;
-
-    PublicKey public muonPublicKey;
-
-    struct SchnorrSign {
-        uint256 signature;
-        address owner;
-        address nonce;
-    }
-
-    struct PublicKey {
-        uint256 x;
-        uint8 parity;
-    }
 
     struct User {
         uint256 balance;
@@ -53,8 +42,6 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
         uint256 tokenId;
     }
     mapping(address => User) public users;
-
-    SchnorrSECP256K1Verifier public verifier;
 
     IMuonNodeManager public nodeManager;
 
@@ -99,7 +86,6 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
     function __MuonNodeStakingUpgradeable_init(
         address muonTokenAddress,
         address nodeManagerAddress,
-        address verifierAddress,
         uint256 _muonAppId,
         PublicKey memory _muonPublicKey,
         address bondedTokenAddress
@@ -112,23 +98,21 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
 
         muonToken = IERC20(muonTokenAddress);
         nodeManager = IMuonNodeManager(nodeManagerAddress);
+        bondedToken = IBondedToken(bondedTokenAddress);
 
         exitPendingPeriod = 7 days;
         minStakeAmountPerNode = 1000 ether;
         REWARD_PERIOD = 30 days;
 
-        verifier = SchnorrSECP256K1Verifier(verifierAddress);
-        verifier.validatePubKey(_muonPublicKey.x);
+        validatePubKey(_muonPublicKey.x);
         muonPublicKey = _muonPublicKey;
         muonAppId = _muonAppId;
-        bondedToken = IBondedToken(bondedTokenAddress);
     }
 
     /**
      * @dev Initializes the contract.
      * @param muonTokenAddress The address of the Muon token.
      * @param nodeManagerAddress The address of the Muon Node Manager contract.
-     * @param verifierAddress The address of the SchnorrSECP256K1Verifier contract.
      * @param _muonAppId The Muon app ID.
      * @param _muonPublicKey The Muon public key.
      * @param bondedTokenAddress The address of the BondedToken contract.
@@ -136,7 +120,6 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
     function initialize(
         address muonTokenAddress,
         address nodeManagerAddress,
-        address verifierAddress,
         uint256 _muonAppId,
         PublicKey memory _muonPublicKey,
         address bondedTokenAddress
@@ -144,7 +127,6 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
         __MuonNodeStakingUpgradeable_init(
             muonTokenAddress,
             nodeManagerAddress,
-            verifierAddress,
             _muonAppId,
             _muonPublicKey,
             bondedTokenAddress
@@ -230,8 +212,9 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
                 "Failed to transfer tokens from your account to the staker contract."
             );
 
-            uint256 receivedAmount = IERC20(tokens[i]).balanceOf(address(this)) -
-                balance;
+            uint256 receivedAmount = IERC20(tokens[i]).balanceOf(
+                address(this)
+            ) - balance;
             require(
                 amounts[i] == receivedAmount,
                 "The discrepancy between the received amount and the claimed amount."
@@ -371,12 +354,12 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
                 amount
             )
         );
-        bool verified = verifier.verifySignature(
-            muonPublicKey.x,
-            muonPublicKey.parity,
-            signature.signature,
+
+        bool verified = muonVerify(
+            reqId,
             uint256(hash),
-            signature.nonce
+            signature,
+            muonPublicKey
         );
         require(verified, "Invalid signature.");
 
@@ -601,7 +584,7 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
         public
         onlyRole(DAO_ROLE)
     {
-        verifier.validatePubKey(_muonPublicKey.x);
+        validatePubKey(_muonPublicKey.x);
 
         muonPublicKey = _muonPublicKey;
         emit MuonPublicKeyUpdated(_muonPublicKey);

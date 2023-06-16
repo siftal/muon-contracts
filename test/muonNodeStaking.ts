@@ -4,7 +4,6 @@ import { expect } from "chai";
 import axios from "axios";
 
 import {
-  SchnorrSECP256K1Verifier,
   MuonNodeManager,
   MuonNodeStaking,
   PIONtest,
@@ -31,7 +30,6 @@ describe("MuonNodeStaking", function () {
   const peerId2 = "QmQ28Fae738pmSuhQPYtsDtwU8pKYPPgf76pSN61T3APh2";
   const peerId3 = "QmQ28Fae738pmSuhQPYtsDtwU8pKYPPgf76pSN61T3APh3";
 
-  let verifier: SchnorrSECP256K1Verifier;
   let nodeManager: MuonNodeManager;
   let pion: PIONtest;
   let pionLp: PIONlpTest;
@@ -64,12 +62,6 @@ describe("MuonNodeStaking", function () {
       user1,
       treasury,
     ] = await ethers.getSigners();
-
-    const SchnorrSECP256K1Verifier = await ethers.getContractFactory(
-      "SchnorrSECP256K1Verifier"
-    );
-    verifier = await SchnorrSECP256K1Verifier.connect(deployer).deploy();
-    verifier.deployed();
   });
 
   beforeEach(async function () {
@@ -96,7 +88,6 @@ describe("MuonNodeStaking", function () {
     nodeStaking = await upgrades.deployProxy(MuonNodeStaking, [
       pion.address,
       nodeManager.address,
-      verifier.address,
       muonAppId,
       muonPublicKey,
       bondedPion.address,
