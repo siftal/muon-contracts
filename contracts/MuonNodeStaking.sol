@@ -255,6 +255,11 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
      * @param tokenIdB The id of the second token to be merged.
      */
     function mergeBondedTokens(uint256 tokenIdA, uint256 tokenIdB) external {
+        require(
+            bondedToken.ownerOf(tokenIdA) == msg.sender,
+            "The sender is not the owner of the NFT."
+        );
+
         bondedToken.transferFrom(msg.sender, address(this), tokenIdA);
         bondedToken.approve(address(bondedToken), tokenIdA);
 
