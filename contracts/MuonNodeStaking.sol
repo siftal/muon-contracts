@@ -219,6 +219,8 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
         );
 
         for (uint256 i = 0; i < tokens.length; i++) {
+            uint256 balance = IERC20(tokens[i]).balanceOf(address(this));
+
             require(
                 IERC20(tokens[i]).transferFrom(
                     msg.sender,
@@ -227,6 +229,14 @@ contract MuonNodeStaking is Initializable, AccessControlUpgradeable {
                 ),
                 "Failed to transfer tokens from your account to the staker contract."
             );
+
+            uint256 receivedAmount = IERC20(tokens[i]).balanceOf(address(this)) -
+                balance;
+            require(
+                amounts[i] == receivedAmount,
+                "The discrepancy between the received amount and the claimed amount."
+            );
+
             require(
                 IERC20(tokens[i]).approve(address(bondedToken), amounts[i]),
                 "Failed to approve to the bondedToken contract to spend tokens on your behalf."
